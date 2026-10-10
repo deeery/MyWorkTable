@@ -1,0 +1,77 @@
+import type { PluginManifest } from '../types/plugin'
+
+/**
+ * 内置插件目录（模拟插件市场）。
+ * 实际部署时该目录可替换为远端插件索引服务，
+ * 用户可上传/安装第三方 manifest（entry 指向任意 https URL）。
+ */
+export const PLUGIN_CATALOG: PluginManifest[] = [
+  {
+    id: 'workbench.clock',
+    name: '时钟',
+    version: '1.0.0',
+    description: '高精度数字时钟 + 日期与星期，每秒刷新。',
+    icon: '🕐',
+    category: 'info',
+    renderMode: 'iframe',
+    entry: '/plugins/clock/index.html',
+    refresh: { intervalMs: 1000, pauseWhenHidden: true },
+    defaultSize: 'S',
+    defaultVisible: true,
+  },
+  {
+    id: 'workbench.weather',
+    name: '天气',
+    version: '1.1.0',
+    description: '模拟天气数据卡片（演示低频刷新：30 分钟一次）。',
+    icon: '⛅',
+    category: 'info',
+    renderMode: 'iframe',
+    entry: '/plugins/weather/index.html',
+    refresh: { intervalMs: 30 * 60 * 1000, pauseWhenHidden: false },
+    permissions: { storage: true },
+    defaultSize: 'M',
+    defaultVisible: true,
+  },
+  {
+    id: 'workbench.notes',
+    name: '便签',
+    version: '1.0.0',
+    description: '可编辑便签，内容自动持久化。模块模式插件示例。',
+    icon: '📝',
+    category: 'tool',
+    renderMode: 'module',
+    entry: '/plugins/notes/main.js',
+    refresh: { intervalMs: 0 },
+    permissions: { storage: true },
+    defaultSize: 'M',
+    defaultVisible: true,
+  },
+  {
+    id: 'workbench.monitor',
+    name: '系统监控',
+    version: '1.0.0',
+    description: '模拟 CPU / 内存实时曲线，2 秒刷新。模块模式插件示例。',
+    icon: '📈',
+    category: 'data',
+    renderMode: 'module',
+    entry: '/plugins/monitor/main.js',
+    refresh: { intervalMs: 2000, pauseWhenHidden: true },
+    defaultSize: 'L',
+    defaultVisible: true,
+  },
+  {
+    id: 'workbench.pomodoro',
+    name: '番茄钟',
+    version: '0.9.0',
+    description: '25 分钟专注计时器，默认不显示在桌面，可从插件市场添加。',
+    icon: '🍅',
+    category: 'tool',
+    renderMode: 'module',
+    entry: '/plugins/pomodoro/main.js',
+    refresh: { intervalMs: 1000, pauseWhenHidden: true },
+    permissions: { storage: true, notify: true },
+    defaultSize: 'S',
+    defaultVisible: false,
+  },
+]

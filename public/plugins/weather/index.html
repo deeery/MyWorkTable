@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<style>
+  :root { --fg:#23263a; --muted:#8a90a6; --accent:#3f9ee8; }
+  [data-theme="dark"] { --fg:#dfe3f0; --muted:#7d84a3; }
+  html,body{height:100%;margin:0;background:transparent;}
+  body{display:grid;place-items:center;font-family:-apple-system,'PingFang SC','Microsoft YaHei',sans-serif;color:var(--fg);}
+  .wrap{text-align:center;}
+  .icon{font-size:44px;}
+  .temp{font-size:30px;font-weight:700;margin:4px 0;}
+  .cond{color:var(--muted);font-size:13px;}
+  .meta{margin-top:8px;font-size:12px;color:var(--muted);}
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="icon" id="icon">⛅</div>
+    <div class="temp" id="temp">--°</div>
+    <div class="cond" id="cond">加载中…</div>
+    <div class="meta">上海 · 更新于 <span id="ts">--</span></div>
+  </div>
+<script>
+  // ============ Workbench iframe 插件：天气（低频刷新：宿主 30 分钟 tick 一次） ============
+  var CONDS = [
+    { icon:'☀️', cond:'晴', t:[24,30] },
+    { icon:'⛅', cond:'多云', t:[20,26] },
+    { icon:'☁️', cond:'阴', t:[17,22] },
+    { icon:'🌧️', cond:'小雨', t:[15,19] },
+  ]
+  function render() {
+    // 演示用模拟数据；真实插件应在此请求天气 API（受宿主刷新调度约束）
+    var c = CONDS[Math.floor(Math.random() * CONDS.length)]
+    document.getElementById('icon').textContent = c.icon
+    document.getElementById('temp').textContent = (c.t[0] + Math.floor(Math.random() * (c.t[1]-c.t[0]))) + '°C'
+    document.getElementById('cond').textContent = c.cond + ' · 湿度 ' + (40 + Math.floor(Math.random()*40)) + '%'
+    document.getElementById('ts').textContent = new Date().toLocaleTimeString('zh-CN')
+  }
+  window.addEventListener('message', function (e) {
+    var msg = e.data || {}
+    if (msg.type === 'workbench:init' || msg.type === 'workbench:tick') render()
+    if (msg.type === 'workbench:theme') document.documentElement.dataset.theme = msg.payload.theme
+  })
+  parent.postMessage({ type: 'plugin:ready', payload: { id: 'workbench.weather' } }, '*')
+  render()
+</script>
+</body>
+</html>

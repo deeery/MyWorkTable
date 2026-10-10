@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<style>
+  :root { --fg:#23263a; --muted:#8a90a6; --bg:transparent; }
+  [data-theme="dark"] { --fg:#dfe3f0; --muted:#7d84a3; }
+  html,body{height:100%;margin:0;background:var(--bg);}
+  body{display:grid;place-items:center;font-family:-apple-system,'PingFang SC','Microsoft YaHei',sans-serif;color:var(--fg);}
+  .time{font-size:34px;font-weight:700;font-variant-numeric:tabular-nums;letter-spacing:1px;}
+  .date{margin-top:6px;text-align:center;color:var(--muted);font-size:13px;}
+  .sec-dot{opacity:.55;font-size:24px;vertical-align:4px;}
+</style>
+</head>
+<body>
+  <div>
+    <div class="time" id="time">--:--<span class="sec-dot">:--</span></div>
+    <div class="date" id="date"></div>
+  </div>
+<script>
+  // ============ Workbench iframe 插件：时钟（每秒 tick 刷新） ============
+  // 契约：加载完成后向宿主发送 plugin:ready；收到 workbench:tick 时重绘
+  function render() {
+    var d = new Date(), p = function (n) { return String(n).padStart(2, '0') }
+    var week = ['日','一','二','三','四','五','六'][d.getDay()]
+    document.getElementById('time').innerHTML =
+      p(d.getHours()) + ':' + p(d.getMinutes()) + '<span class="sec-dot">:' + p(d.getSeconds()) + '</span>'
+    document.getElementById('date').textContent =
+      d.getFullYear() + ' 年 ' + (d.getMonth() + 1) + ' 月 ' + d.getDate() + ' 日 · 星期' + week
+  }
+  window.addEventListener('message', function (e) {
+    var msg = e.data || {}
+    if (msg.type === 'workbench:init') {
+      document.documentElement.dataset.theme = msg.payload.theme
+      render()
+    }
+    if (msg.type === 'workbench:tick') render()
+    if (msg.type === 'workbench:theme') document.documentElement.dataset.theme = msg.payload.theme
+  })
+  // 握手：通知宿主插件已就绪
+  parent.postMessage({ type: 'plugin:ready', payload: { id: 'workbench.clock' } }, '*')
+  render()
+</script>
+</body>
+</html>
