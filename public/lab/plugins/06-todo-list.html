@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>待办清单 · 任务管理</title>
+<link rel="stylesheet" href="../assets/theme.css">
+<link rel="stylesheet" href="../assets/compact.css">
+<style>
+  :root { --accent: #6366f1; --accent-2: #818cf8; }
+  .pri { width: 4px; border-radius: 99px; align-self: stretch; flex: none; }
+  .pri.high { background: var(--danger); }
+  .pri.mid { background: var(--warn); }
+  .pri.low { background: var(--ok); }
+  .chk { width: 20px; height: 20px; border-radius: 7px; border: 2px solid color-mix(in srgb, var(--muted) 45%, transparent);
+         display: grid; place-items: center; cursor: pointer; flex: none; transition: .2s; font-size: 12px; color: transparent; }
+  .chk:hover { border-color: var(--accent); }
+  .item.done .chk { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .addrow { display: flex; gap: 7px; }
+  .addrow input { flex: 1; }
+  .del { opacity: 0; transition: .18s; }
+  .item:hover .del { opacity: 1; }
+  .pbar { height: 6px; }
+</style>
+</head>
+<body>
+<div class="win" style="--w:420px">
+  <header class="win-head">
+    <div class="lights"><i></i><i></i><i></i></div>
+    <div class="win-title"><span class="ico">✅</span>待办清单<span class="win-sub">任务管理</span></div>
+    <div class="spacer"></div>
+    <span class="badge" id="left">0 项待办</span>
+  </header>
+
+  <div class="win-body">
+    <div class="card col" style="gap:9px">
+      <div class="addrow">
+        <input type="text" id="input" placeholder="添加一个任务，回车即可保存…" maxlength="60">
+        <button class="btn primary" id="add">＋</button>
+      </div>
+      <div class="row between">
+        <div class="chips" id="priChips">
+          <span class="chip" data-pri="high">高</span>
+          <span class="chip on" data-pri="mid">中</span>
+          <span class="chip" data-pri="low">低</span>
+        </div>
+        <span class="tiny muted">优先级</span>
+      </div>
+    </div>
+
+    <div class="tabs" id="tabs">
+      <button class="active" data-f="all">全部</button>
+      <button data-f="todo">进行中</button>
+      <button data-f="done">已完成</button>
+      <button data-f="high">高优先级</button>
+    </div>
+
+    <div class="card col" style="gap:7px">
+      <div class="row between">
+        <span class="small bold">完成进度</span>
+        <span class="badge ok" id="pctTxt">0%</span>
+      </div>
+      <div class="bar pbar"><i id="bar"></i></div>
+      <div class="row between tiny muted">
+        <span>已完成 <b id="doneN">0</b> 项</span>
+        <span>共 <b id="allN">0</b> 项</span>
+        <span>高优先级 <b id="highN">0</b> 项</span>
+      </div>
+    </div>
+
+    <div class="list scroll" id="list" style="--scroll-h:216px"></div>
+
+    <div class="row between">
+      <span class="tiny muted" id="tip">点击左侧方块可勾选完成</span>
+      <button class="btn sm danger" id="clear">清空已完成</button>
+    </div>
+  </div>
+
+  <footer class="win-foot">
+    <span class="dot live"></span><span id="foot">数据已自动保存</span>
+    <div class="spacer" style="flex:1"></div>
+    <span class="tiny" id="clock">--:--</span>
+  </footer>
+</div>
+
+<script src="../assets/pl.js"></script>
+<script src="../assets/compact.js"></script>
+<script>
+(function () {
+  const { $, $$, toast, beep, store, pad, today } = PL;
+
+  const SEED = [
+    { id: 1, t: '整理本周会议纪要', pri: 'high', done: false, at: '09:20' },
+    { id: 2, t: '回复客户邮件（3 封）', pri: 'mid', done: false, at: '09:45' },
+    { id: 3, t: '喝水提醒插件 UI 走查', pri: 'high', done: true, at: '10:05' },
+    { id: 4, t: '更新项目 README', pri: 'low', done: false, at: '11:10' },
+    { id: 5, t: '给喵酱买小鱼干 🐟', pri: 'mid', done: true, at: '12:00' }
+  ];
+  const PRI_TXT = { high: '高', mid: '中', low: '低' };
+
+  let todos = store.get('todos', SEED);
+  let filter = 'all', pri = 'mid', seq = 100;
+
+  $('#priChips').onclick = e => {
+    const c = e.target.closest('.chip');
+    if (!c) return;
+    pri = c.dataset.pri;
+    $$('#priChips .chip').forEach(x => x.classList.toggle('on', x === c));
+  };
+
+  function visible() {
+    return todos.filter(t => filter === 'all' ? true : filter === 'todo' ? !t.done : filter === 'done' ? t.done : t.pri === 'high');
+  }
+
+  function render() {
+    const list = visible(), box = $('#list');
+    box.innerHTML = '';
+    if (!list.length) {
+      box.innerHTML = '<div class="empty">' +
+        (filter === 'done' ? '还没有完成的任务喵~' : filter === 'high' ? '没有高优先级任务，很轻松喵~' : '全部完成啦，休息一下吧 🎉') + '</div>';
+    }
+    list.forEach(t => {
+      const el = document.createElement('div');
+      el.className = 'item' + (t.done ? ' done' : '');
+      el.innerHTML =
+        '<div class="pri ' + t.pri + '"></div>' +
+        '<div class="chk" data-toggle="' + t.id + '">✓</div>' +
+        '<div class="grow"><div class="t">' + esc(t.t) + '</div>' +
+        '<div class="s">' + PRI_TXT[t.pri] + '优先级 · ' + t.at + ' 创建</div></div>' +
+        '<button class="btn sm del" data-del="' + t.id + '" title="删除">🗑</button>';
+      box.appendChild(el);
+    });
+
+    const done = todos.filter(t => t.done).length, all = todos.length;
+    const pct = all ? Math.round(done / all * 100) : 0;
+    $('#bar').style.width = pct + '%';
+    $('#pctTxt').textContent = pct + '%';
+    $('#doneN').textContent = done;
+    $('#allN').textContent = all;
+    $('#highN').textContent = todos.filter(t => t.pri === 'high' && !t.done).length;
+    $('#left').textContent = (all - done) + ' 项待办';
+    store.set('todos', todos);
+  }
+
+  function esc(s) { return String(s).replace(/[<>&"]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c])); }
+
+  function add() {
+    const v = $('#input').value.trim();
+    if (!v) { toast('先写点什么吧喵~', 'warn'); $('#input').focus(); return; }
+    todos.unshift({ id: ++seq + Date.now() % 1000, t: v, pri: pri, done: false, at: PL.fmtClock().slice(0, 5) });
+    $('#input').value = '';
+    beep(700, .08); toast('已添加：' + v, 'ok'); render();
+  }
+  $('#add').onclick = add;
+  $('#input').onkeydown = e => { if (e.key === 'Enter') add(); };
+
+  $('#list').onclick = e => {
+    const tg = e.target.closest('[data-toggle]');
+    if (tg) {
+      const t = todos.find(x => x.id == tg.dataset.toggle);
+      if (!t) return;
+      t.done = !t.done;
+      beep(t.done ? 880 : 520, .08);
+      if (t.done) toast('完成：' + t.t + ' 🎉', 'ok');
+      render(); return;
+    }
+    const dl = e.target.closest('[data-del]');
+    if (dl) {
+      const i = todos.findIndex(x => x.id == dl.dataset.del);
+      if (i > -1) { const [r] = todos.splice(i, 1); toast('已删除：' + r.t, 'warn'); render(); }
+    }
+  };
+
+  $('#tabs').onclick = e => {
+    const b = e.target.closest('button');
+    if (!b) return;
+    filter = b.dataset.f;
+    $$('#tabs button').forEach(x => x.classList.toggle('active', x === b));
+    render();
+  };
+
+  $('#clear').onclick = () => {
+    const n = todos.filter(t => t.done).length;
+    if (!n) { toast('没有已完成的任务', 'warn'); return; }
+    if ($('#clear').dataset.confirm === '1') {
+      todos = todos.filter(t => !t.done);
+      $('#clear').dataset.confirm = '';
+      $('#clear').textContent = '清空已完成';
+      toast('已清理 ' + n + ' 项已完成任务', 'ok');
+      render();
+    } else {
+      $('#clear').dataset.confirm = '1';
+      $('#clear').textContent = '确认清空 ' + n + ' 项？';
+      toast('再点一次确认清空', 'warn');
+      setTimeout(() => { if ($('#clear').dataset.confirm === '1') { $('#clear').dataset.confirm = ''; $('#clear').textContent = '清空已完成'; } }, 4000);
+    }
+  };
+
+  setInterval(() => {
+    $('#clock').textContent = PL.fmtClock().slice(0, 5);
+    const done = todos.filter(t => t.done).length;
+    $('#foot').textContent = done === todos.length && todos.length ? '全部完成，喵酱给你点赞 👍' : '数据已自动保存 · ' + done + '/' + todos.length;
+    // 任务状态可能变化，顺带刷新精简组件
+    PL.compactRefreshAll();
+  }, 1000);
+
+  render();
+
+  /* ============================================================
+     桌面精简形态：未完成数 / 待办几条 / 完成率
+     ============================================================ */
+  const cwf = PL.cwf;
+
+  const PRI_ICON = { high: '🔴', mid: '🟡', low: '🟢' };
+
+  PL.compact({
+    id: 'todo-list',
+    name: '待办清单',
+    icon: '✅',
+    defFormat: 'stat',
+    defSize: 'square',
+    data: () => ({ todos, filter, pri }),
+    formats: [
+      {
+        id: 'stat',
+        name: '未完成数',
+        icon: '🔢',
+        options: [
+          { key: 'which', type: 'select', label: '显示哪个', def: 'left',
+            options: [
+              { value: 'left', label: '未完成数' },
+              { value: 'done', label: '已完成数' },
+              { value: 'all', label: '任务总数' },
+              { value: 'high', label: '高优先级待办' },
+            ] },
+          { key: 'label', type: 'text', label: '标签文字', def: '' },
+        ],
+        render: (o, d) => {
+          const which = o.which || 'left';
+          const v = which === 'done' ? d.todos.filter(t => t.done).length
+            : which === 'all' ? d.todos.length
+            : which === 'high' ? d.todos.filter(t => t.pri === 'high' && !t.done).length
+            : d.todos.filter(t => !t.done).length;
+          const auto = { left: '未完成', done: '已完成', all: '任务总数', high: '高优先级待办' }[which];
+          return cwf.stat({ value: v, unit: '项', name: o.label || auto });
+        },
+      },
+      {
+        id: 'list',
+        name: '待办几条',
+        icon: '📋',
+        options: [
+          { key: 'max', type: 'num', label: '显示条数', def: 3, min: 2, max: 5 },
+          { key: 'scope', type: 'select', label: '显示范围', def: 'todo',
+            options: [
+              { value: 'todo', label: '进行中' },
+              { value: 'all', label: '全部' },
+              { value: 'high', label: '高优先级' },
+            ] },
+        ],
+        render: (o, d) => {
+          const scope = o.scope || 'todo';
+          const arr = d.todos.filter(t => scope === 'todo' ? !t.done : scope === 'high' ? (t.pri === 'high' && !t.done) : true);
+          const rows = arr.length
+            ? arr.map(t => ({ icon: PRI_ICON[t.pri] || '•', text: t.t, right: PRI_TXT[t.pri] }))
+            : [{ icon: '🎉', text: '全部完成啦，休息一下', right: '' }];
+          return cwf.list({ rows, max: Number(o.max) || 3 });
+        },
+      },
+      {
+        id: 'bar',
+        name: '完成率',
+        icon: '📈',
+        options: [
+          { key: 'showName', type: 'bool', label: '显示名称', def: true },
+          { key: 'sub', type: 'select', label: '副标题', def: 'ratio',
+            options: [
+              { value: 'ratio', label: '已完成 / 总数' },
+              { value: 'left', label: '还剩几项' },
+              { value: 'none', label: '不显示' },
+            ] },
+        ],
+        render: (o, d) => {
+          const all = d.todos.length, done = d.todos.filter(t => t.done).length;
+          const pct = all ? Math.round(done / all * 100) : 0;
+          const sub = o.sub === 'none' ? ''
+            : o.sub === 'left' ? '还剩 ' + (all - done) + ' 项'
+            : done + ' / ' + all + ' 项已完成';
+          return cwf.bar({
+            name: o.showName === false ? '' : '完成率',
+            value: pct, unit: '%', pct, sub,
+          });
+        },
+      },
+    ],
+  });
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,460 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>天气小部件 · 当前与预报</title>
+<link rel="stylesheet" href="../assets/theme.css">
+<link rel="stylesheet" href="../assets/compact.css">
+<style>
+  :root { --accent: #3b82f6; --accent-2: #60a5fa; }
+  .hero {
+    display: flex; align-items: center; gap: 14px;
+    background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 20%, var(--surface-2)), var(--surface-2));
+    border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 14px;
+  }
+  .hero .big-ico { font-size: 46px; line-height: 1; filter: drop-shadow(0 4px 10px rgba(0,0,0,.18)); }
+  .hero .temp { font-size: 38px; font-weight: 750; letter-spacing: -1.5px; line-height: 1; }
+  .hero .temp sup { font-size: 16px; font-weight: 600; letter-spacing: 0; }
+  #chart { width: 100%; height: 96px; display: block; border-radius: 10px; }
+  .fc-row { display: flex; align-items: center; gap: 9px; }
+  .fc-row .d { width: 40px; font-size: 11.5px; font-weight: 600; }
+  .fc-row .i { width: 22px; text-align: center; font-size: 15px; }
+  .fc-row .lo, .fc-row .hi { font-size: 11px; font-family: var(--mono); width: 30px; text-align: right; }
+  .fc-row .lo { color: var(--muted); }
+  .fc-bar { flex: 1; height: 6px; border-radius: 99px; background: color-mix(in srgb, var(--muted) 20%, transparent); position: relative; overflow: hidden; }
+  .fc-bar > i { position: absolute; top: 0; bottom: 0; border-radius: 99px; background: linear-gradient(90deg, var(--accent-2), var(--accent)); }
+  .aqi-pill { font-weight: 700; padding: 3px 9px; border-radius: 99px; font-size: 11px; }
+  .refresh-btn.spin-ico span { display: inline-block; animation: spin 0.9s linear infinite; }
+</style>
+</head>
+<body>
+<div class="win" style="--w:400px">
+  <header class="win-head">
+    <div class="lights"><i></i><i></i><i></i></div>
+    <div class="win-title"><span class="ico">⛅</span>天气小部件<span class="win-sub">当前与预报</span></div>
+    <div class="spacer"></div>
+    <button class="btn sm icon refresh-btn" id="refresh" title="刷新天气">🔄</button>
+  </header>
+
+  <div class="win-body">
+    <select id="city"></select>
+
+    <div class="hero">
+      <div class="big-ico" id="icon">☀️</div>
+      <div class="grow">
+        <div class="temp" id="temp">--<sup>°C</sup></div>
+        <div class="small muted" id="cond">加载中…</div>
+        <div class="tiny muted" id="feels">体感 --° · 湿度 --% · 风速 -- km/h</div>
+      </div>
+      <div class="col" style="align-items:flex-end;gap:6px">
+        <span class="aqi-pill" id="aqi">--</span>
+        <span class="tiny muted" id="updated">--:--</span>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="row between" style="margin-bottom:6px">
+        <span class="small bold">24 小时温度趋势</span>
+        <span class="tiny muted">每秒推进一格 · 实时刷新</span>
+      </div>
+      <canvas id="chart" width="720" height="192"></canvas>
+    </div>
+
+    <div class="card">
+      <div class="row between" style="margin-bottom:8px">
+        <span class="small bold">未来 7 天</span>
+        <span class="tiny muted" id="range-tip">--</span>
+      </div>
+      <div class="list" id="forecast"></div>
+    </div>
+
+    <div class="card">
+      <div class="row between">
+        <span class="small bold">空气质量</span>
+        <span class="tiny muted" id="aqi-txt">--</span>
+      </div>
+      <div class="bar thin" style="margin:8px 0 6px"><i id="aqi-bar" style="width:0"></i></div>
+      <div class="tiny" id="tip">正在获取生活提示…</div>
+    </div>
+  </div>
+
+  <footer class="win-foot">
+    <span class="dot live"></span><span id="foot">模拟数据 · 每秒刷新</span>
+    <div class="spacer" style="flex:1"></div>
+    <span class="tiny" id="foot-clock">--:--:--</span>
+  </footer>
+</div>
+
+<script src="../assets/pl.js"></script>
+<script src="../assets/compact.js"></script>
+<script>
+(function () {
+  const { $, $$, toast, store, pad } = PL;
+
+  const CITY_KEY = 'weather-city';
+
+  // 内置模拟城市库（不依赖网络，数值由基准温度 + 正弦日变化生成）
+  const CITIES = {
+    hangzhou: { name: '杭州', base: 21, cond: '多云', icon: '⛅', humid: 68, wind: 12, aqi: 62, tip: '空气不错，适合出门散步喵~' },
+    beijing:  { name: '北京', base: 15, cond: '晴',   icon: '☀️', humid: 34, wind: 21, aqi: 118, tip: '空气偏干，记得多喝水、注意保湿。' },
+    shanghai: { name: '上海', base: 23, cond: '小雨', icon: '🌧️', humid: 82, wind: 17, aqi: 47, tip: '有雨，出门记得带伞喵~' },
+    chengdu:  { name: '成都', base: 19, cond: '阴',   icon: '☁️', humid: 76, wind: 8,  aqi: 88, tip: '阴天光线柔和，适合窝着看书。' },
+    guangzhou:{ name: '广州', base: 27, cond: '雷阵雨', icon: '⛈️', humid: 88, wind: 24, aqi: 55, tip: '雷雨天气，注意关好窗户。' },
+    xian:     { name: '西安', base: 17, cond: '晴间多云', icon: '🌤️', humid: 45, wind: 14, aqi: 96, tip: '温差较大，早晚记得添衣。' }
+  };
+  const DAY_NAMES = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
+
+  let cityId = store.get(CITY_KEY, 'hangzhou');
+  if (!CITIES[cityId]) cityId = 'hangzhou';
+
+  // 24 小时曲线数据（每小时一个点），初始用正弦日变化填充
+  let hours = [];
+  let cursor = 0;          // 曲线推进指针
+  let jitter = 0;          // 每秒的小幅抖动，制造"实时感"
+  let refreshedAt = Date.now();
+
+  function baseTemp(city, hour) {
+    // 日变化：14 点最高，凌晨 4 点最低
+    return city.base + Math.sin((hour - 9) / 24 * Math.PI * 2) * 5.2;
+  }
+
+  function buildHours() {
+    const c = CITIES[cityId];
+    const h = new Date().getHours();
+    hours = [];
+    for (let i = 0; i < 24; i++) {
+      const hh = (h - 23 + i + 48) % 24;
+      hours.push({ h: hh, t: +(baseTemp(c, hh) + PL.rand(-0.7, 0.7)).toFixed(1) });
+    }
+    cursor = 23;
+  }
+
+  function currentTemp() {
+    return +(hours[hours.length - 1].t + jitter).toFixed(1);
+  }
+
+  /* ---------- 城市下拉 ---------- */
+  function renderCitySelect() {
+    const sel = $('#city');
+    sel.innerHTML = '';
+    Object.keys(CITIES).forEach(id => {
+      const o = document.createElement('option');
+      o.value = id;
+      o.textContent = CITIES[id].name + ' · ' + CITIES[id].cond;
+      if (id === cityId) o.selected = true;
+      sel.appendChild(o);
+    });
+  }
+
+  /* ---------- 主卡 ---------- */
+  function renderCurrent() {
+    const c = CITIES[cityId];
+    const t = currentTemp();
+    $('#icon').textContent = c.icon;
+    $('#temp').innerHTML = t.toFixed(1) + '<sup>°C</sup>';
+    $('#cond').textContent = c.name + ' · ' + c.cond + ' · 模拟实时数据';
+    $('#feels').textContent = '体感 ' + (t - 1.2).toFixed(1) + '° · 湿度 ' + c.humid + '% · 风速 ' + c.wind + ' km/h';
+
+    const lvl = aqiLevel(c.aqi);
+    const pill = $('#aqi');
+    pill.textContent = 'AQI ' + c.aqi + ' ' + lvl.name;
+    pill.style.background = 'color-mix(in srgb, ' + lvl.color + ' 18%, transparent)';
+    pill.style.color = lvl.color;
+    $('#aqi-txt').textContent = lvl.name + ' · ' + lvl.desc;
+    $('#aqi-bar').style.width = Math.min(100, c.aqi / 3) + '%';
+    $('#aqi-bar').style.background = lvl.color;
+    $('#tip').textContent = '🐾 ' + c.tip;
+
+    const d = new Date(refreshedAt);
+    $('#updated').textContent = pad(d.getHours()) + ':' + pad(d.getMinutes()) + ' 更新';
+  }
+
+  function aqiLevel(a) {
+    if (a <= 50) return { name: '优', color: '#17b26a', desc: '空气清新，放心开窗' };
+    if (a <= 100) return { name: '良', color: '#8fbf2f', desc: '可以正常活动' };
+    if (a <= 150) return { name: '轻度污染', color: '#f79009', desc: '敏感人群减少户外' };
+    return { name: '中度污染', color: '#f04438', desc: '建议戴口罩出门' };
+  }
+
+  /* ---------- 7 天预报 ---------- */
+  function renderForecast() {
+    const c = CITIES[cityId];
+    const box = $('#forecast');
+    box.innerHTML = '';
+    const ICONS = ['☀️', '🌤️', '⛅', '☁️', '🌦️', '🌧️', '⛈️'];
+    let lo = 99, hi = -99;
+    const rows = [];
+    for (let i = 0; i < 7; i++) {
+      const day = new Date(Date.now() + i * 86400000);
+      const drift = Math.sin(i * 0.9) * 3.4;
+      const h = +(baseTemp(c, 14) + drift + PL.rand(-0.6, 0.6)).toFixed(0);
+      const l = +(baseTemp(c, 4) + drift + PL.rand(-0.6, 0.6)).toFixed(0);
+      lo = Math.min(lo, l); hi = Math.max(hi, h);
+      rows.push({ day: day, hi: h, lo: l, icon: i === 0 ? c.icon : ICONS[(i * 3 + c.aqi) % ICONS.length], rain: Math.round(PL.rand(0, 80)) });
+    }
+    rows.forEach(r => {
+      const el = document.createElement('div');
+      el.className = 'fc-row';
+      const span = Math.max(6, hi - lo);
+      const left = (r.lo - lo) / span * 100;
+      const width = Math.max(12, (r.hi - r.lo) / span * 100);
+      el.innerHTML =
+        '<span class="d">' + (r.day.getTime() - Date.now() < 86400000 && r.day.getDate() === new Date().getDate() ? '今天' : DAY_NAMES[r.day.getDay()]) + '</span>' +
+        '<span class="i">' + r.icon + '</span>' +
+        '<span class="lo">' + r.lo + '°</span>' +
+        '<span class="fc-bar"><i style="left:' + left + '%;width:' + width + '%"></i></span>' +
+        '<span class="hi">' + r.hi + '°</span>' +
+        '<span class="tiny muted" style="width:34px;text-align:right">' + r.rain + '%</span>';
+      el.title = '降水概率 ' + r.rain + '%';
+      box.appendChild(el);
+    });
+    $('#range-tip').textContent = '最低 ' + lo + '° / 最高 ' + hi + '°';
+  }
+
+  /* ---------- Canvas 折线图（每秒推进一格） ---------- */
+  const cv = $('#chart');
+  const ctx = cv.getContext('2d');
+
+  // 安全测量文字宽度：某些环境（或桩实现）拿不到数值时退回估算值
+  function textW(s) {
+    try {
+      const m = ctx && ctx.measureText ? ctx.measureText(String(s)) : null;
+      const w = m ? m.width : null;
+      if (typeof w === 'number' && isFinite(w) && w > 0) return w;
+    } catch (e) { /* 忽略，走估算 */ }
+    return String(s).length * 9;
+  }
+
+  function drawChart() {
+    if (!ctx || !ctx.clearRect) return;
+    const W = cv.width, H = cv.height;
+    const padL = 34, padR = 12, padT = 14, padB = 22;
+    ctx.clearRect(0, 0, W, H);
+
+    const temps = hours.map(x => x.t);
+    let min = Math.min.apply(null, temps), max = Math.max.apply(null, temps);
+    if (max - min < 4) { const m = (max + min) / 2; min = m - 2; max = m + 2; }
+    min -= 1; max += 1;
+
+    const px = i => padL + i * (W - padL - padR) / (hours.length - 1);
+    const py = t => padT + (1 - (t - min) / (max - min)) * (H - padT - padB);
+
+    // 网格 + 温度刻度
+    ctx.strokeStyle = 'rgba(128,140,170,.22)';
+    ctx.fillStyle = 'rgba(128,140,170,.85)';
+    ctx.font = '18px system-ui, sans-serif';
+    ctx.lineWidth = 1;
+    for (let g = 0; g <= 3; g++) {
+      const t = min + (max - min) * g / 3;
+      const y = Math.round(py(t)) + .5;
+      ctx.beginPath(); ctx.moveTo(padL, y); ctx.lineTo(W - padR, y); ctx.stroke();
+      ctx.fillText(Math.round(t) + '°', 4, y + 6);
+    }
+
+    // 面积填充
+    const grad = ctx.createLinearGradient ? ctx.createLinearGradient(0, padT, 0, H - padB) : null;
+    if (grad && grad.addColorStop) {
+      grad.addColorStop(0, 'rgba(59,130,246,.42)');
+      grad.addColorStop(1, 'rgba(59,130,246,.02)');
+    }
+    ctx.beginPath();
+    ctx.moveTo(px(0), H - padB);
+    hours.forEach((h, i) => ctx.lineTo(px(i), py(h.t)));
+    ctx.lineTo(px(hours.length - 1), H - padB);
+    ctx.closePath();
+    if (grad) ctx.fillStyle = grad;
+    ctx.fill();
+
+    // 折线
+    ctx.beginPath();
+    hours.forEach((h, i) => (i ? ctx.lineTo(px(i), py(h.t)) : ctx.moveTo(px(i), py(h.t))));
+    ctx.strokeStyle = '#3b82f6';
+    ctx.lineWidth = 3;
+    ctx.lineJoin = 'round';
+    ctx.stroke();
+
+    // 当前点（最后一格）高亮
+    const lx = px(hours.length - 1), ly = py(hours[hours.length - 1].t);
+    ctx.beginPath(); ctx.arc(lx, ly, 7, 0, Math.PI * 2);
+    ctx.fillStyle = '#fbbf24'; ctx.fill();
+    ctx.strokeStyle = '#fff'; ctx.lineWidth = 3; ctx.stroke();
+
+    // 时间轴标签：每 6 小时一个
+    ctx.fillStyle = 'rgba(128,140,170,.9)';
+    hours.forEach((h, i) => {
+      if (i % 6 !== 0 && i !== hours.length - 1) return;
+      const label = pad(h.h) + ':00';
+      const w = textW(label);
+      ctx.fillText(label, Math.min(W - padR - w, Math.max(padL, px(i) - w / 2)), H - 6);
+    });
+  }
+
+  /* ---------- 刷新 ---------- */
+  let refreshing = false;
+  $('#refresh').onclick = () => {
+    if (refreshing) return;
+    refreshing = true;
+    const btn = $('#refresh');
+    btn.classList.add('spin-ico');
+    btn.disabled = true;
+    toast('正在刷新 ' + CITIES[cityId].name + ' 的天气…', 'info');
+    setTimeout(() => {
+      const c = CITIES[cityId];
+      // 刷新：整体温度轻微变化 + 曲线尾部更新
+      jitter = PL.rand(-1.4, 1.4);
+      c.humid = PL.clamp(c.humid + Math.round(PL.rand(-4, 4)), 20, 96);
+      c.wind = PL.clamp(c.wind + Math.round(PL.rand(-3, 3)), 2, 40);
+      c.aqi = PL.clamp(c.aqi + Math.round(PL.rand(-9, 9)), 12, 180);
+      refreshedAt = Date.now();
+      buildHours();
+      renderCurrent(); renderForecast(); drawChart();
+      btn.classList.remove('spin-ico');
+      btn.disabled = false;
+      refreshing = false;
+      PL.beep(880, .08);
+      toast('天气已更新 · ' + new Date(refreshedAt).toTimeString().slice(0, 5), 'ok');
+    }, 700);
+  };
+
+  $('#city').onchange = e => {
+    cityId = e.target.value;
+    store.set(CITY_KEY, cityId);
+    const c = CITIES[cityId];
+    jitter = 0;
+    refreshedAt = Date.now();
+    buildHours();
+    renderCurrent(); renderForecast(); drawChart();
+    toast('已切换到「' + c.name + '」' + c.icon, 'ok');
+    PL.beep(700, .08);
+  };
+
+  /* ---------- 每秒推进：曲线滚动 + 数字跳动 ---------- */
+  setInterval(() => {
+    const c = CITIES[cityId];
+    jitter = PL.clamp(jitter + PL.rand(-0.22, 0.22), -1.6, 1.6);
+
+    // 每秒把曲线整体左移一格，尾部补入新的实时值
+    const nowH = new Date().getHours();
+    const last = hours[hours.length - 1];
+    const next = { h: nowH, t: +(baseTemp(c, nowH) + jitter + PL.rand(-0.15, 0.15)).toFixed(1) };
+    if (last.h === nowH) hours[hours.length - 1] = next;
+    else { hours.shift(); hours.push(next); }
+
+    renderCurrent();
+    drawChart();
+    $('#foot-clock').textContent = PL.fmtClock();
+    $('#foot').textContent = CITIES[cityId].name + ' · 模拟数据 · 每秒刷新';
+
+    // 温度每秒都在跳动，精简组件一起刷新
+    PL.compactRefreshAll();
+  }, 1000);
+
+  /* ---------- 初始化 ---------- */
+  renderCitySelect();
+  buildHours();
+  renderCurrent();
+  renderForecast();
+  drawChart();
+  $('#foot-clock').textContent = PL.fmtClock();
+
+  /* ============================================================
+     桌面精简形态：天气图标 / 温度数值 / 未来几天
+     ============================================================ */
+  const cwf = PL.cwf;
+  const CW_ICONS = ['☀️', '🌤️', '⛅', '☁️', '🌦️', '🌧️', '⛈️'];
+
+  /** 未来第 i 天的预报：与完整窗口同一套算法，但取值稳定，免得每秒乱跳 */
+  function cwForecast(c, i) {
+    const drift = Math.sin(i * 0.9) * 3.4;
+    return {
+      day: new Date(Date.now() + i * 86400000),
+      hi: Math.round(baseTemp(c, 14) + drift),
+      lo: Math.round(baseTemp(c, 4) + drift),
+      icon: i === 0 ? c.icon : CW_ICONS[(i * 3 + c.aqi) % CW_ICONS.length],
+      rain: (i * 13 + c.aqi) % 81,
+    };
+  }
+
+  PL.compact({
+    id: 'weather-widget',
+    name: '天气小部件',
+    icon: '⛅',
+    defFormat: 'icon',
+    defSize: 'square',
+    data: () => ({ city: CITIES[cityId], temp: currentTemp() }),
+    formats: [
+      {
+        id: 'icon',
+        name: '天气图标',
+        icon: '⛅',
+        options: [
+          { key: 'showCity', type: 'bool', label: '显示城市名', def: true },
+          { key: 'showTemp', type: 'bool', label: '显示温度', def: true },
+        ],
+        render: (o) => {
+          const c = CITIES[cityId];
+          const lvl = aqiLevel(c.aqi);
+          const nm = [
+            o.showCity === false ? '' : c.name,
+            o.showTemp === false ? '' : currentTemp().toFixed(1) + '°C',
+          ].filter(Boolean).join(' · ');
+          /* 主色跟随空气质量等级，一眼看出好不好出门 */
+          return cwf.icon({ emoji: c.icon, color: lvl.color, name: nm, label: !!nm });
+        },
+      },
+      {
+        id: 'stat',
+        name: '温度数值',
+        icon: '🌡️',
+        options: [
+          { key: 'metric', type: 'select', label: '显示数值', def: 'temp',
+            options: [
+              { value: 'temp', label: '当前温度' },
+              { value: 'feels', label: '体感温度' },
+              { value: 'humid', label: '湿度' },
+              { value: 'aqi', label: '空气质量' },
+            ] },
+          { key: 'label', type: 'text', label: '标签文字', def: '' },
+        ],
+        render: (o) => {
+          const c = CITIES[cityId];
+          const t = currentTemp();
+          const M = {
+            temp:  { v: t.toFixed(1), u: '°C', n: c.name + ' · ' + c.cond },
+            feels: { v: (t - 1.2).toFixed(1), u: '°C', n: '体感温度' },
+            humid: { v: c.humid, u: '%', n: '相对湿度' },
+            aqi:   { v: c.aqi, u: '', n: 'AQI ' + aqiLevel(c.aqi).name },
+          };
+          const m = M[o.metric] || M.temp;
+          return cwf.stat({ value: m.v, unit: m.u, name: o.label || m.n });
+        },
+      },
+      {
+        id: 'list',
+        name: '未来几天',
+        icon: '📅',
+        options: [
+          { key: 'max', type: 'num', label: '显示天数', def: 3, min: 2, max: 5 },
+          { key: 'showRain', type: 'bool', label: '显示降水概率', def: true },
+        ],
+        render: (o) => {
+          const c = CITIES[cityId];
+          const rows = [];
+          for (let i = 0; i < 7; i++) {
+            const f = cwForecast(c, i);
+            rows.push({
+              icon: f.icon,
+              text: (i === 0 ? '今天' : DAY_NAMES[f.day.getDay()]) + ' ' + f.lo + '° / ' + f.hi + '°',
+              right: o.showRain === false ? '' : f.rain + '%',
+            });
+          }
+          return cwf.list({ rows, max: Number(o.max) || 3 });
+        },
+      },
+    ],
+  });
+})();
+</script>
+</body>
+</html>

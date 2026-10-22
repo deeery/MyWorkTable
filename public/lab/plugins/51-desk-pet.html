@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>喵酱桌宠 · 悬浮陪伴</title>
+<link rel="stylesheet" href="../assets/theme.css">
+<link rel="stylesheet" href="../assets/compact.css">
+<style>
+  /* 专属主色：与 tools/manifest.json 里 #51 的 accent 保持一致。
+     verify.mjs 会逐条核对这个值，改了记得同步 manifest.json。 */
+  :root { --accent: #f472b6; --accent-2: #f9a8d4; }
+
+  /* 桌宠以悬浮层渲染（manifest.overlay），宿主给它一个 fixed 容器。
+     这里把插件自带的 .win 外壳整个去掉 —— 桌宠就是一只猫，
+     不该有标题栏和边框。 */
+  html, body { background: transparent !important; }
+  body { display: block !important; place-items: unset !important; overflow: hidden; }
+  .win { display: none !important; }
+
+  .pet-stage {
+    position: fixed; inset: 0;
+    display: grid; place-items: center;
+    cursor: grab; user-select: none;
+    -webkit-user-select: none;
+  }
+  .pet-stage.dragging { cursor: grabbing; }
+  .cat-wrap {
+    position: relative;
+    transition: transform .9s ease-in-out;
+    filter: drop-shadow(0 6px 12px rgba(0,0,0,.22));
+  }
+  .pet-stage.dragging .cat-wrap { transition: none; }
+  .cat { display: block; width: 100%; height: auto; }
+  /* 走路：身体上下颠 */
+  .cat.mood-walk { animation: bob .5s ease-in-out infinite; }
+  @keyframes bob {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-5px); }
+  }
+  /* 睡觉：缓慢起伏 */
+  .cat.mood-sleep { animation: slp 2.6s ease-in-out infinite; }
+  @keyframes slp {
+    0%, 100% { transform: translateY(0) scale(1); }
+    50% { transform: translateY(2px) scale(.985); }
+  }
+  /* 尾巴摇 */
+  .tail { transform-origin: 148px 132px; animation: tail 2.2s ease-in-out infinite; }
+  @keyframes tail {
+    0%, 100% { transform: rotate(-6deg); }
+    50% { transform: rotate(10deg); }
+  }
+  .cat.mood-sleep .tail { animation-duration: 4.5s; }
+
+  /* 眼睛/嘴的三种形态由 mood 类切换 */
+  .eye-alt, .mouth-alt { display: none; }
+  .cat.mood-sleep .eye-open { display: none; }
+  .cat.mood-sleep .eye-sleep { display: block; }
+  .cat.mood-happy .eye-open { display: none; }
+  .cat.mood-happy .eye-happy { display: block; }
+  .cat.mood-sleep .mouth-normal { display: none; }
+  .cat.mood-sleep .mouth-sleep { display: block; }
+  .cat.mood-happy .mouth-normal { display: none; }
+  .cat.mood-happy .mouth-happy { display: block; }
+  /* 眨眼：短暂藏起睁眼 */
+  .cat.blink .eye-open { display: none; }
+  .cat.blink .eye-sleep { display: block; }
+
+  .bubble {
+    position: absolute; left: 78%; top: -6px;
+    max-width: 180px; padding: 7px 11px;
+    background: #fff; color: #3b2b33;
+    border: 1px solid #f0d4e4; border-radius: 12px;
+    font-size: 12px; line-height: 1.5; white-space: nowrap;
+    box-shadow: 0 4px 14px rgba(0,0,0,.14);
+    opacity: 0; transition: opacity .18s;
+  }
+  .bubble.on { opacity: 1; }
+  .bubble::before {
+    content: ''; position: absolute; left: -5px; top: 16px;
+    width: 9px; height: 9px; background: #fff;
+    border-left: 1px solid #f0d4e4; border-bottom: 1px solid #f0d4e4;
+    transform: rotate(45deg);
+  }
+  .zzz {
+    position: absolute; right: 4px; top: -4px;
+    font-size: 15px; font-weight: 700; color: #f472b6;
+    opacity: 0;
+  }
+  .cat.mood-sleep + .zzz { animation: zzz 2s ease-in-out infinite; }
+  @keyframes zzz {
+    0% { opacity: 0; transform: translate(0,0) scale(.8); }
+    40% { opacity: 1; }
+    100% { opacity: 0; transform: translate(10px,-18px) scale(1.15); }
+  }
+
+  /* 提示条：鼠标移上去才出现，告诉用户能拖能点 */
+  .tip {
+    position: absolute; left: 50%; bottom: -22px; transform: translateX(-50%);
+    font-size: 10px; color: #a58aa0; white-space: nowrap;
+    opacity: 0; transition: opacity .2s;
+  }
+  .pet-stage:hover .tip { opacity: 1; }
+</style>
+</head>
+<body data-overlay="pet">
+<div class="win" style="--w:400px">
+  <header class="win-head">
+    <div class="lights"><i></i><i></i><i></i></div>
+    <div class="win-title"><span class="ico">🐱</span>喵酱桌宠</div>
+  </header>
+  <div class="win-body"></div>
+</div>
+
+<div class="pet-stage" id="stage">
+  <div class="cat-wrap" id="wrap">
+    <!-- 纯 SVG 小猫，无外链图片 -->
+    <svg class="cat mood-normal" id="cat" viewBox="0 0 200 170" role="img" aria-label="喵酱桌宠">
+      <g class="tail">
+        <path d="M148 132 C176 128 186 104 172 86" fill="none" stroke="#f9a8d4" stroke-width="11" stroke-linecap="round"/>
+      </g>
+      <ellipse cx="100" cy="126" rx="54" ry="36" fill="#fbcfe8"/>
+      <ellipse cx="100" cy="134" rx="34" ry="24" fill="#fff1f7"/>
+      <ellipse cx="76" cy="152" rx="15" ry="9" fill="#f9a8d4"/>
+      <ellipse cx="124" cy="152" rx="15" ry="9" fill="#f9a8d4"/>
+      <g class="head">
+        <path d="M46 62 L40 22 L76 40 Z" fill="#f9a8d4"/>
+        <path d="M154 62 L160 22 L124 40 Z" fill="#f9a8d4"/>
+        <path d="M49 57 L46 32 L69 44 Z" fill="#fbcfe8"/>
+        <path d="M151 57 L154 32 L131 44 Z" fill="#fbcfe8"/>
+        <ellipse cx="100" cy="76" rx="60" ry="50" fill="#fbcfe8"/>
+        <!-- 睁眼 -->
+        <g class="eye-open">
+          <ellipse cx="78" cy="72" rx="9" ry="11" fill="#3b2b33"/>
+          <ellipse cx="122" cy="72" rx="9" ry="11" fill="#3b2b33"/>
+          <circle cx="81" cy="68" r="3" fill="#fff"/>
+          <circle cx="125" cy="68" r="3" fill="#fff"/>
+        </g>
+        <!-- 闭眼（睡觉 / 眨眼） -->
+        <path class="eye-alt eye-sleep" d="M70 74 q8 7 16 0 M114 74 q8 7 16 0" fill="none" stroke="#3b2b33" stroke-width="3.4" stroke-linecap="round"/>
+        <!-- 笑眼 -->
+        <path class="eye-alt eye-happy" d="M69 76 q9 -12 18 0 M113 76 q9 -12 18 0" fill="none" stroke="#3b2b33" stroke-width="3.4" stroke-linecap="round"/>
+        <path d="M96 92 h8 l-4 5 z" fill="#f472b6"/>
+        <path class="mouth-normal" d="M100 97 q-9 9 -15 2 M100 97 q9 9 15 2" fill="none" stroke="#3b2b33" stroke-width="2.6" stroke-linecap="round"/>
+        <path class="mouth-alt mouth-happy" d="M88 97 q12 14 24 0" fill="none" stroke="#3b2b33" stroke-width="2.8" stroke-linecap="round"/>
+        <path class="mouth-alt mouth-sleep" d="M92 100 q8 6 16 0" fill="none" stroke="#3b2b33" stroke-width="2.8" stroke-linecap="round"/>
+        <path d="M40 82 h-16 M40 90 l-15 5 M160 82 h16 M160 90 l15 5" fill="none" stroke="#f9a8d4" stroke-width="2.4" stroke-linecap="round"/>
+        <ellipse cx="60" cy="92" rx="10" ry="6" fill="#f472b6" opacity=".38"/>
+        <ellipse cx="140" cy="92" rx="10" ry="6" fill="#f472b6" opacity=".38"/>
+      </g>
+    </svg>
+    <div class="zzz">z Z</div>
+    <div class="bubble" id="bubble">喵~ 本喵在的喵！</div>
+    <div class="tip">拖动我到处走 · 点我摸摸头</div>
+  </div>
+</div>
+
+<script src="../assets/pl.js"></script>
+<script>
+(function () {
+  const { $, store } = PL;
+
+  const cat = $('#cat'), stage = $('#stage'), bubble = $('#bubble');
+
+  const LINES = {
+    idle: ['喵~ 本喵在的喵！', '在发呆…', '要不要摸摸头？', '肚子有点饿了…', '今天也要加油喵~'],
+    happy: ['喵呜~ 好开心！', '呼噜呼噜~', '最喜欢你了！', '再摸一下！'],
+    sleep: ['zzZ…', '呼…呼…', '别吵，睡着了…'],
+  };
+  const ACT_MIN = 4500, ACT_MAX = 11000, BUBBLE_MS = 2600;
+
+  let mood = 'idle';
+  let bubbleTimer = null, actTimer = null, blinkTimer = null;
+  let dragging = false, dragMoved = false;
+  let start = null;
+
+  /** 说一句话 */
+  function say(text) {
+    bubble.textContent = text;
+    bubble.classList.add('on');
+    if (bubbleTimer) clearTimeout(bubbleTimer);
+    bubbleTimer = setTimeout(() => bubble.classList.remove('on'), BUBBLE_MS);
+  }
+  function sayRandom(m) {
+    const arr = LINES[m || mood] || LINES.idle;
+    say(arr[Math.floor(Math.random() * arr.length)]);
+  }
+
+  /** 切心情（同时更新 class，眼睛与嘴跟着换） */
+  function setMood(m) {
+    mood = m;
+    cat.className = 'cat mood-' + m;
+  }
+
+  /* 眨眼 */
+  function loopBlink() {
+    blinkTimer = setTimeout(() => {
+      cat.classList.add('blink');
+      setTimeout(() => cat.classList.remove('blink'), 160);
+      loopBlink();
+    }, 2500 + Math.random() * 2500);
+  }
+
+  /* 随机动作 */
+  function loopAct() {
+    actTimer = setTimeout(() => {
+      const roll = Math.random();
+      if (mood === 'sleep') { setMood('idle'); say('喵？醒了…'); }
+      else if (roll < 0.4) {
+        setMood('walk');
+        // 通知宿主把容器挪一小段（桌宠的「走动」由宿主移动窗口实现）
+        try {
+          parent.postMessage({
+            type: 'pl:pet-walk',
+            dx: Math.round(Math.random() * 320 - 160),
+            dy: Math.round(Math.random() * 180 - 90),
+          }, '*');
+        } catch (e) {}
+        setTimeout(() => { if (mood === 'walk') setMood('idle'); }, 2600);
+      }
+      else if (roll < 0.62) { setMood('sleep'); }
+      else { setMood('idle'); if (Math.random() < 0.5) sayRandom('idle'); }
+      loopAct();
+    }, ACT_MIN + Math.random() * (ACT_MAX - ACT_MIN));
+  }
+
+  /* 拖动：桌宠本体在 iframe 里，但移动整个悬浮容器得由宿主做
+     （iframe 不能移动自己的父元素）。这里把鼠标位移转成消息发给宿主。 */
+  stage.addEventListener('mousedown', (e) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    dragging = true; dragMoved = false;
+    stage.classList.add('dragging');
+    start = { x: e.clientX, y: e.clientY };
+    try { parent.postMessage({ type: 'pl:pet-drag-start' }, '*'); } catch (err) {}
+  });
+
+  window.addEventListener('mousemove', (e) => {
+    if (!dragging || !start) return;
+    const dx = e.clientX - start.x, dy = e.clientY - start.y;
+    if (Math.abs(dx) > 2 || Math.abs(dy) > 2) dragMoved = true;
+    // 每次发的是「相对上一次的增量」，宿主累加即可
+    try { parent.postMessage({ type: 'pl:pet-move', dx: e.clientX, dy: e.clientY }, '*'); } catch (err) {}
+    start = { x: e.clientX, y: e.clientY };
+  });
+
+  window.addEventListener('mouseup', () => {
+    if (!dragging) return;
+    dragging = false;
+    stage.classList.remove('dragging');
+    start = null;
+    try { parent.postMessage({ type: 'pl:pet-drag-end' }, '*'); } catch (err) {}
+    if (dragMoved) {
+      // 拖完开心一下
+      setMood('happy');
+      sayRandom('happy');
+      setTimeout(() => { if (mood === 'happy') setMood('idle'); }, 3000);
+    }
+  });
+
+  /* 单击摸头（拖过就不算点击） */
+  stage.addEventListener('click', () => {
+    if (dragMoved) { dragMoved = false; return; }
+    setMood('happy');
+    sayRandom('happy');
+    setTimeout(() => { if (mood === 'happy') setMood('idle'); }, 2600);
+  });
+
+  /* 记住心情统计，纯装饰但让「养成」有点痕迹 */
+  const pats = store.get('pet-pats', 0);
+  stage.addEventListener('click', () => store.set('pet-pats', store.get('pet-pats', 0) + 1));
+
+  setMood('idle');
+  say('喵~ 我来啦！');
+  loopBlink();
+  loopAct();
+
+  /* 收到宿主设置变更时换配色（走 PL 的主题逻辑即可，这里无需额外处理） */
+})();
+</script>
+</body>
+</html>

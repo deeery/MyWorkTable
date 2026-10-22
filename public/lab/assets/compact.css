@@ -1,0 +1,558 @@
+/* ============================================================
+   喵酱插件实验室 · 桌面精简形态 compact.css
+   ------------------------------------------------------------
+   插件在桌面上不一定以完整窗口出现，也可以是一个小组件。
+   本文件定义「精简形态」的全部外观：
+     - 组件外壳 .cw（尺寸由 --cw / --ch 控制，支持方/宽/高/迷你）
+     - 各种格式（单图标 / 单日期 / 时钟 / 进度环 / 进度条 / 数值 /
+       滑块 / 迷你列表 / 开关 / 文本）
+     - 对应的编辑菜单 .cw-editor（选择格式、调整该格式的选项）
+
+   设计约定与 theme.css 保持一致：只消费 --accent / --accent-2 /
+   --surface / --text / --muted / --border 等变量，因此换主色时
+   完整窗口与精简组件会一起变色。
+   ============================================================ */
+
+/* ---------- 舞台：透明背景，仅用于居中组件 ----------
+   用 position:fixed + inset:0 锚定视口，而不是依赖 body 高度：
+   theme.css 里有 html,body{height:100%}，与 body.pl-compact 的
+   display:block 组合后 body 高度会塌成内容高，靠 min-height:100vh
+   居中的方案在无头浏览器/嵌入式 iframe 下会偏到角落并被裁切。
+   内层用 flex 居中并允许滚动，视口比组件还小时也不会把组件挤出去。 */
+.cw-stage {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 14px;
+  background: transparent;
+  overflow: auto;
+}
+/* 菜单展开时会超出组件范围，舞台不能裁剪它 */
+.cw-stage:has(.cw.editing) { overflow: visible; }
+/* 视口过小时（如无头浏览器只给了很矮的窗口），改为顶部对齐，
+   避免 flex 居中把组件上下都裁掉 */
+@media (max-height: 220px), (max-width: 220px) {
+  .cw-stage { align-items: flex-start; justify-content: center; }
+}
+
+/* 容器比「组件 + 内边距」还小时，去掉内边距。
+   典型场景：被宿主嵌进一张 S 卡片（body 高约 145px），而 square 组件是 140px，
+   14px 内边距会让总高变成 168px → 组件外面多出一圈滚动条，很难看。
+   这里按容器尺寸逐级收紧内边距，让组件尽量贴满而不溢出。 */
+@media (max-height: 200px), (max-width: 200px) {
+  .cw-stage { padding: 2px; }
+}
+@media (max-height: 160px), (max-width: 160px) {
+  .cw-stage { padding: 0; }
+}
+/* 极窄时（比最小号组件 96px 还小）才允许滚动，并把滚动条做细 */
+.cw-stage::-webkit-scrollbar { width: 4px; height: 4px; }
+.cw-stage::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--muted) 30%, transparent);
+  border-radius: 2px;
+}
+.cw-stage::-webkit-scrollbar-track { background: transparent; }
+
+/* ---------- 组件外壳 ---------- */
+.cw {
+  --cw: 140px;
+  --ch: 140px;
+  position: relative;
+  width: var(--cw);
+  height: var(--ch);
+  border-radius: 20px;
+  background: color-mix(in srgb, var(--surface) 88%, transparent);
+  backdrop-filter: blur(16px) saturate(140%);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+  color: var(--text);
+  font-family: var(--font);
+  user-select: none;
+  transition: transform .18s cubic-bezier(.2, 1.2, .4, 1), box-shadow .18s;
+}
+/* 组件尺寸档位：由插件或编辑器写入 --cw/--ch */
+.cw.sz-square { --cw: 140px; --ch: 140px; }
+.cw.sz-mini   { --cw: 96px;  --ch: 96px;  }
+.cw.sz-wide   { --cw: 264px; --ch: 92px;  }
+.cw.sz-tall   { --cw: 132px; --ch: 208px; }
+.cw.sz-banner { --cw: 300px; --ch: 68px;  }
+
+.cw:hover { transform: translateY(-2px); box-shadow: 0 22px 46px -20px rgba(20, 28, 60, .5), 0 2px 8px rgba(20, 28, 60, .1); }
+.cw:active { transform: translateY(0) scale(.985); }
+
+/* 顶部一条主色高光，让组件与插件主色呼应 */
+.cw::before {
+  content: "";
+  position: absolute; inset: 0 0 auto 0; height: 3px;
+  background: linear-gradient(90deg, var(--accent), var(--accent-2));
+  opacity: .9;
+}
+
+/* 可点击的正面：铺满整个组件 */
+.cw-face {
+  position: absolute; inset: 0;
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  gap: 3px; padding: 12px 10px;
+  cursor: pointer;
+  text-align: center;
+}
+
+/* 右上角设置齿轮：默认半透明，悬停组件时显现 */
+.cw-gear {
+  position: absolute; top: 6px; right: 6px;
+  width: 22px; height: 22px; border-radius: 7px;
+  display: grid; place-items: center;
+  font-size: 11px; line-height: 1;
+  color: var(--muted); background: color-mix(in srgb, var(--surface) 80%, transparent);
+  border: 1px solid var(--border); cursor: pointer;
+  opacity: 0; transition: opacity .16s, color .16s, background .16s;
+  z-index: 3;
+}
+.cw:hover .cw-gear, .cw-gear:focus-visible { opacity: 1; }
+.cw-gear:hover { color: var(--accent); background: var(--accent-soft); }
+.cw.editing .cw-gear { opacity: 1; color: var(--accent); background: var(--accent-soft); }
+
+/* 状态点：右下角小圆点，用于表示「运行中/待办」等 */
+.cw-dot {
+  position: absolute; right: 8px; bottom: 8px;
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--muted); z-index: 2;
+}
+.cw-dot.on { background: var(--ok); box-shadow: 0 0 0 0 color-mix(in srgb, var(--ok) 60%, transparent); animation: pulse 1.8s infinite; }
+.cw-dot.warn { background: var(--warn); }
+.cw-dot.danger { background: var(--danger); }
+
+/* ============================================================
+   格式：单图标 —— 一个 emoji 图标砖（启动器、宠物等）
+   ============================================================ */
+.cw-icon .ic {
+  width: 58%; height: 58%;
+  min-width: 40px; min-height: 40px;
+  border-radius: 26%;
+  display: grid; place-items: center;
+  font-size: 30px;
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  box-shadow: 0 6px 16px -10px rgba(0, 0, 0, .55);
+  transition: transform .2s cubic-bezier(.2, 1.5, .4, 1);
+}
+.cw.sz-mini .cw-icon .ic { font-size: 22px; }
+.cw.sz-wide .cw-icon { flex-direction: row; justify-content: flex-start; gap: 12px; padding-left: 16px; }
+.cw.sz-wide .cw-icon .ic { width: 44px; height: 44px; min-width: 44px; min-height: 44px; font-size: 22px; border-radius: 13px; }
+.cw-icon .nm { font-size: 11px; font-weight: 650; line-height: 1.2; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cw.sz-mini .cw-icon .nm { font-size: 9.5px; }
+.cw-face.bump .ic { animation: pop .35s cubic-bezier(.2, 1.6, .4, 1) both; }
+
+/* ============================================================
+   格式：单日期 —— 大数字 + 单位 + 名称（倒数日等）
+   ============================================================ */
+.cw-date .num {
+  font-family: var(--mono); font-weight: 700;
+  font-size: 34px; line-height: 1; letter-spacing: -1.5px;
+  color: var(--accent);
+}
+.cw-date.soon .num { color: var(--danger); }
+.cw-date.past .num { color: var(--muted); }
+.cw.sz-mini .cw-date .num { font-size: 24px; }
+.cw-date .unit { font-size: 10.5px; color: var(--muted); font-weight: 600; }
+.cw-date .nm { font-size: 11px; font-weight: 650; margin-top: 2px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cw-date .sub { font-size: 10px; color: var(--muted); font-family: var(--mono); }
+/* 宽版：数字在左、文字在右 */
+.cw.sz-wide .cw-date { flex-direction: row; align-items: center; justify-content: flex-start; gap: 14px; padding-left: 18px; text-align: left; }
+.cw.sz-wide .cw-date .num { font-size: 30px; }
+.cw.sz-wide .cw-date .txt { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+
+/* ============================================================
+   格式：时钟 —— 时间文本（世界时钟等）
+   ============================================================ */
+.cw-clock .t {
+  font-family: var(--mono); font-weight: 700;
+  font-size: 26px; line-height: 1; letter-spacing: -1px;
+  font-variant-numeric: tabular-nums;
+}
+.cw.sz-mini .cw-clock .t { font-size: 19px; }
+.cw-clock .sec { font-size: 13px; color: var(--muted); }
+.cw-clock .nm { font-size: 10.5px; color: var(--muted); font-weight: 600; }
+.cw-clock .day { font-size: 10px; color: var(--muted); }
+.cw.sz-wide .cw-clock { flex-direction: row; gap: 12px; }
+
+/* ============================================================
+   格式：进度环 —— 环形进度 + 中心数值
+   ============================================================ */
+.cw-ring .rg {
+  --p: 0;
+  --thick: 9px;
+  width: 62%; height: 62%; min-width: 62px; min-height: 62px;
+  border-radius: 50%; flex: none;
+  background: conic-gradient(var(--accent) calc(var(--p) * 1%), color-mix(in srgb, var(--muted) 22%, transparent) 0);
+  display: grid; place-items: center; position: relative;
+  transition: background .4s;
+}
+.cw-ring .rg::before {
+  content: ""; position: absolute; inset: var(--thick); border-radius: 50%;
+  background: color-mix(in srgb, var(--surface) 96%, transparent);
+}
+.cw-ring .rg > b {
+  position: relative; font-size: 17px; font-weight: 700; letter-spacing: -.5px;
+  font-variant-numeric: tabular-nums;
+}
+.cw.sz-mini .cw-ring .rg > b { font-size: 13px; }
+.cw-ring .lb { font-size: 10.5px; color: var(--muted); font-weight: 600; }
+.cw.sz-wide .cw-ring { flex-direction: row; gap: 14px; }
+.cw.sz-wide .cw-ring .rg { width: 62px; height: 62px; min-width: 62px; min-height: 62px; }
+
+/* ============================================================
+   格式：进度条 —— 横向进度 + 数值（喝水、学习等）
+   ============================================================ */
+.cw-bar { align-items: stretch; justify-content: center; gap: 7px; padding: 0 16px; }
+.cw-bar .hd { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.cw-bar .v { font-size: 17px; font-weight: 700; font-family: var(--mono); letter-spacing: -.5px; }
+.cw-bar .u { font-size: 10.5px; color: var(--muted); }
+.cw-bar .nm { font-size: 11px; font-weight: 650; }
+.cw-bar .tr { height: 7px; border-radius: 99px; background: color-mix(in srgb, var(--muted) 22%, transparent); overflow: hidden; }
+.cw-bar .tr > i { display: block; height: 100%; border-radius: 99px; background: linear-gradient(90deg, var(--accent), var(--accent-2)); transition: width .5s cubic-bezier(.3, 1, .4, 1); }
+.cw-bar .sub { font-size: 10px; color: var(--muted); }
+.cw.sz-mini .cw-bar { padding: 0 10px; }
+.cw.sz-mini .cw-bar .v { font-size: 14px; }
+.cw.sz-mini .cw-bar .nm { display: none; }
+
+/* ============================================================
+   格式：数值 —— 标签 + 数字（统计类）
+   ============================================================ */
+.cw-stat .v {
+  font-family: var(--mono); font-weight: 700;
+  font-size: 28px; line-height: 1; letter-spacing: -1px;
+}
+.cw.sz-mini .cw-stat .v { font-size: 20px; }
+.cw-stat .u { font-size: 11px; color: var(--muted); font-weight: 600; }
+.cw-stat .nm { font-size: 10.5px; color: var(--muted); }
+.cw.sz-wide .cw-stat { flex-direction: row; gap: 12px; align-items: baseline; }
+
+/* ============================================================
+   格式：滑块 —— 可直接拖动的控制（音量、亮度等）
+   ============================================================ */
+.cw-slider { align-items: stretch; justify-content: center; gap: 8px; padding: 0 16px; }
+.cw-slider .hd { display: flex; align-items: center; gap: 7px; }
+.cw-slider .ic { font-size: 15px; }
+.cw-slider .nm { font-size: 11px; font-weight: 650; flex: 1; }
+.cw-slider .v { font-family: var(--mono); font-size: 12px; font-weight: 700; color: var(--accent); }
+.cw-slider input[type="range"] { height: 6px; }
+.cw.sz-mini .cw-slider { padding: 0 10px; }
+.cw.sz-mini .cw-slider .nm { display: none; }
+
+/* ============================================================
+   格式：开关 —— 一个大开关（勿扰等）
+   ============================================================ */
+.cw-toggle .ic { font-size: 26px; line-height: 1; transition: transform .2s; }
+.cw.sz-mini .cw-toggle .ic { font-size: 20px; }
+.cw-toggle .nm { font-size: 11px; font-weight: 650; }
+.cw-toggle .st { font-size: 10px; color: var(--muted); }
+.cw-toggle.on .ic { transform: scale(1.12); }
+.cw-toggle.on { background: color-mix(in srgb, var(--accent) 14%, color-mix(in srgb, var(--surface) 88%, transparent)); }
+
+/* ============================================================
+   格式：迷你列表 —— 2~4 行紧凑条目
+   ============================================================ */
+.cw-list { align-items: stretch; justify-content: flex-start; gap: 5px; padding: 12px 11px; }
+.cw-list .r {
+  display: flex; align-items: center; gap: 7px;
+  font-size: 11px; line-height: 1.25;
+  padding: 3px 5px; border-radius: 7px;
+  background: color-mix(in srgb, var(--surface-2) 70%, transparent);
+}
+.cw-list .r .av { font-size: 12px; flex: none; }
+.cw-list .r .tx { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.cw-list .r .rt { font-size: 10px; color: var(--muted); font-family: var(--mono); flex: none; }
+.cw-list .more { font-size: 10px; color: var(--muted); text-align: center; }
+/* 空列表提示：内容为空时也要有反馈，不能是一块纯白 */
+.cw-list.cw-empty { align-items: center; justify-content: center; }
+.cw-list .hint { font-size: 12px; color: var(--muted); text-align: center; }
+
+/* ============================================================
+   格式：文本 —— 一段文字（每日一言、便签等）
+   ============================================================ */
+.cw-text { align-items: stretch; justify-content: center; gap: 6px; padding: 14px 15px; text-align: left; }
+.cw-text .q {
+  font-size: 12px; line-height: 1.5; font-weight: 600;
+  display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden;
+}
+.cw-text .by { font-size: 10px; color: var(--muted); text-align: right; }
+.cw.sz-mini .cw-text { padding: 10px; }
+.cw.sz-mini .cw-text .q { font-size: 10.5px; -webkit-line-clamp: 3; }
+
+/* ------------------------------------------------------------
+   格式：可就地编辑的文本（便签正文）
+   ------------------------------------------------------------
+   便签要在精简形态里直接改内容，所以正文从 <div> 换成 <textarea>。
+
+   与 .cw-text 的区别只有三点：
+     · .q 变成可聚焦控件，必须撑满剩余空间（flex:1），不能再用
+       -webkit-line-clamp 截断 —— 那套只对块级文本生效，用在
+       textarea 上会让它塌成一行高。
+     · 背景透明：底色由插件按便签颜色刷在 .cw-face 上，
+       输入框自己再涂一层就会盖掉。
+     · 光标改成文本形，不然鼠标悬上去还是「可点击打开完整窗口」的样子。
+
+   规则写在 .cw-text 之后：两者权重相同（各两个类选择器），
+   靠源码顺序覆盖，所以这段不能上移。
+   ------------------------------------------------------------ */
+.cw-note { align-items: stretch; justify-content: center; text-align: left;
+           padding: 12px 13px; gap: 8px; cursor: default; }
+.cw-note .q {
+  flex: 1; width: 100%; min-height: 0; resize: none;
+  display: block; padding: 0; border: 0; outline: none;
+  background: transparent; color: var(--text); cursor: text;
+  font: inherit; font-size: 12.5px; line-height: 1.55; font-weight: 600;
+  overflow-y: auto; overscroll-behavior: contain;
+}
+.cw-note .q::placeholder { color: var(--muted); font-weight: 500; }
+.cw-note .q::-webkit-scrollbar { width: 4px; }
+.cw-note .q::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--text) 18%, transparent); border-radius: 4px;
+}
+.cw-note .by { flex: none; font-size: 10px; color: var(--muted); text-align: right; }
+.cw.sz-mini .cw-note { padding: 9px 10px; }
+.cw.sz-mini .cw-note .q { font-size: 11px; }
+
+/* ============================================================
+   编辑菜单（精简形态的设置面板）
+   ------------------------------------------------------------
+   不内嵌在组件里（组件只有 96~140px，装不下格式网格 + 选项），
+   而是从组件展开成一个更大的浮层：宽度固定 232px，高度自适应，
+   以组件为中心向外扩展。这样小尺寸组件也能有完整可用的菜单。
+   ============================================================ */
+.cw-editor {
+  position: absolute;
+  left: 50%; top: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 10;
+  width: 232px;
+  max-height: 300px;
+  display: flex; flex-direction: column;
+  gap: 9px; padding: 12px;
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--surface) 97%, transparent);
+  backdrop-filter: blur(14px) saturate(140%);
+  border: 1px solid var(--border);
+  box-shadow: 0 22px 50px -18px rgba(20, 28, 60, .55), 0 2px 8px rgba(20, 28, 60, .12);
+  animation: cw-ed-in .22s cubic-bezier(.2, 1.2, .4, 1) both;
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+/* 组件本身不裁剪，否则菜单会被 overflow:hidden 切掉 */
+.cw.editing { overflow: visible; }
+.cw.editing::before { border-radius: 20px 20px 0 0; }
+@keyframes cw-ed-in { from { opacity: 0; transform: translate(-50%, -50%) scale(.94); } }
+.cw-editor .hd {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 11.5px; font-weight: 700; flex: none;
+}
+.cw-editor .hd .grow { flex: 1; }
+.cw-editor .hd .x {
+  width: 20px; height: 20px; border-radius: 6px; flex: none;
+  display: grid; place-items: center; font-size: 11px; line-height: 1;
+  color: var(--muted); background: transparent; border: 1px solid var(--border); cursor: pointer;
+}
+.cw-editor .hd .x:hover { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 40%, transparent); }
+.cw-editor .grp { display: flex; flex-direction: column; gap: 5px; }
+.cw-editor .grp > .lb { font-size: 10px; color: var(--muted); font-weight: 700; letter-spacing: .3px; }
+
+/* 格式选择：小卡片网格 */
+.cw-fmts { display: grid; grid-template-columns: repeat(3, 1fr); gap: 5px; }
+.cw-fmt {
+  display: flex; flex-direction: column; align-items: center; gap: 3px;
+  padding: 7px 3px; border-radius: 9px; cursor: pointer;
+  background: var(--surface-2); border: 1px solid var(--border);
+  font-size: 9.5px; font-weight: 600; color: var(--muted);
+  transition: all .16s; text-align: center; line-height: 1.15;
+}
+.cw-fmt .fi { font-size: 15px; line-height: 1; }
+.cw-fmt:hover { border-color: color-mix(in srgb, var(--accent) 40%, transparent); color: var(--text); }
+.cw-fmt.on { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+.cw-fmt.on .fi { transform: scale(1.08); }
+
+/* 尺寸选择 */
+.cw-sizes { display: flex; gap: 5px; }
+.cw-size {
+  flex: 1; padding: 5px 2px; border-radius: 8px; cursor: pointer;
+  background: var(--surface-2); border: 1px solid var(--border);
+  font-size: 9.5px; font-weight: 600; color: var(--muted); text-align: center;
+  transition: all .16s;
+}
+.cw-size:hover { border-color: color-mix(in srgb, var(--accent) 40%, transparent); color: var(--text); }
+.cw-size.on { background: var(--accent); color: var(--accent-ink); border-color: transparent; }
+
+/* 通用选项行（开关、下拉、色块） */
+.cw-opt { display: flex; align-items: center; gap: 7px; font-size: 11px; }
+.cw-opt .grow {
+  flex: 1;
+  /* 标签不换行、不被控件挤压（否则「显示哪个」会竖排成四行） */
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cw-opt select { font-size: 11px; padding: 4px 7px; border-radius: 8px; width: auto; flex: none; max-width: 116px; }
+/* theme.css 给 input 设了 width:100%，在编辑器里会挤掉标签，故这里收回 */
+.cw-opt input[type="number"],
+.cw-opt input[type="text"] { width: auto; flex: none; font-size: 11px; padding: 4px 7px; border-radius: 8px; }
+.cw-opt input[type="number"] { width: 56px; }
+.cw-opt input[type="text"] { width: 104px; }
+.cw-opt .sw {
+  position: relative; width: 34px; height: 19px; flex: none; cursor: pointer;
+}
+.cw-opt .sw input { position: absolute; opacity: 0; width: 100%; height: 100%; margin: 0; cursor: pointer; }
+.cw-opt .sw i { position: absolute; inset: 0; border-radius: 99px; background: color-mix(in srgb, var(--muted) 35%, transparent); transition: background .2s; }
+.cw-opt .sw i::after { content: ""; position: absolute; top: 2px; left: 2px; width: 15px; height: 15px; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,.3); transition: transform .22s cubic-bezier(.3,1.4,.5,1); }
+.cw-opt .sw input:checked + i { background: var(--accent); }
+.cw-opt .sw input:checked + i::after { transform: translateX(15px); }
+
+/* 编辑器底部：预览尺寸提示 */
+.cw-editor .foot {
+  margin-top: auto; flex: none;
+  font-size: 9.5px; color: var(--muted); text-align: center;
+  padding-top: 4px; border-top: 1px solid var(--border);
+}
+
+/* ============================================================
+   精简形态下的页面：隐藏完整窗口、透明背景
+   ============================================================ */
+body.pl-compact {
+  background: transparent !important;
+  padding: 0 !important;
+  margin: 0;
+  display: block;
+  /* 让 body 至少占满视口，避免高度塌陷导致子元素定位异常 */
+  min-height: 100vh;
+  overflow: hidden;
+}
+body.pl-compact::after { display: none; }
+body.pl-compact .win { display: none !important; }
+
+/* ============================================================
+   嵌入模式（?view=embed）
+   ------------------------------------------------------------
+   宿主容器本身已是一个窗口（标题栏 / 圆角 / 阴影俱全），
+   插件不必再套一层 .win。这里把插件窗口的外壳特征全部抹掉，
+   只留下内部内容；布局与组件样式一律不动。
+   ============================================================ */
+html.pl-embed,
+html.pl-embed body {
+  background: transparent !important;
+  margin: 0;
+  padding: 0;
+  min-height: 0;
+  height: auto;
+  /* 关键：theme.css 里 body 是 `display:grid; place-items:center`（用于把
+     窗口在整页居中）。嵌入模式下必须改回 block，否则 .win 会被 grid 的
+     place-items:center 变成 shrink-to-fit，宽度塌成几十像素、文字逐字竖排。 */
+  display: block !important;
+  place-items: initial !important;
+  width: 100%;
+}
+
+/* 颗粒质感层在嵌入时会露出宿主的背景，去掉 */
+html.pl-embed body::after { display: none; }
+
+/* 抹掉窗口外壳：边框、圆角、阴影、背景、宽度限制、入场动画 */
+html.pl-embed .win.win-flat {
+  width: 100% !important;
+  max-width: none !important;
+  min-width: 0 !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  background: transparent !important;
+  backdrop-filter: none !important;
+  animation: none !important;
+  overflow: visible !important;
+}
+
+/* 隐藏插件自带的标题栏与状态栏 —— 宿主卡片已提供等价信息 */
+html.pl-embed .win-chrome-hidden { display: none !important; }
+
+/* 内容区去掉多余内边距，交给宿主容器统一控制 */
+html.pl-embed .win.win-flat .win-body {
+  padding: 10px;
+  gap: 10px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cw, .cw-face, .cw-editor { animation-duration: .001ms !important; transition-duration: .01ms !important; }
+}
+
+/* ============================================================
+   宿主模式（?view=host）
+   ------------------------------------------------------------
+   精简形态里的 .cw 组件自带圆角 20px、1px 边框、投影与背景模糊，
+   单独看是个 nicely 立体的部件；但被塞进 Workbench 卡片这种
+   「已经是一个窗口」的容器里时，它就变成了卡片里又嵌了块小窗 ——
+   和 embed 要消除的 .win 套壳是同一个问题，只是外壳换成了 .cw。
+
+   所以宿主加载精简形态时用 ?view=host：
+     · 仍然只显示小部件（同 compact）
+     · 但抹掉 .cw 的边框/圆角/阴影/毛玻璃，让卡片成为唯一那层窗口
+   与 embed 的区别：embed 抹的是 .win（完整窗口），host 抹的是 .cw（小组件）。
+   保留 ?view=compact 供画廊独立预览，那里 .cw 就是主角，需要立体感。
+   ============================================================ */
+html.pl-host .cw,
+html.pl-host .cw.sz-mini,
+html.pl-host .cw.sz-square,
+html.pl-host .cw.sz-wide,
+html.pl-host .cw.sz-tall,
+html.pl-host .cw.sz-banner {
+  border: 0 !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  background: transparent !important;
+  backdrop-filter: none !important;
+}
+
+/* 悬停时不要再浮起投影 —— 那会让它又「浮」回卡片之上像独立窗口 */
+html.pl-host .cw:hover {
+  transform: none;
+  box-shadow: none !important;
+}
+
+/* 顶部主色高光条：卡片已有自己的标题栏色块，这层只在独立预览时需要 */
+html.pl-host .cw::before { display: none; }
+
+/* ============================================================
+   宿主模式下组件尺寸完全跟随窗口
+   ------------------------------------------------------------
+   原本组件尺寸是「档位」—— 插件侧存一个 sz-square / sz-mini 之类的
+   枚举，各自对应一组固定的 --cw/--ch（140×140、96×96…）。宿主卡片
+   再有自己的尺寸档位（S/M/L/XL）和用户拖拽的自由尺寸。
+
+   两套尺寸来源互相打架：
+     · 卡片拉得很大，组件还是 140px 的小方块，四周一大片空白
+     · 卡片拖得很小，组件溢出、出现滚动条
+   而且用户要在设置里单独调一个「组件尺寸」，与拉卡片这件事重复。
+
+   现在统一成一条规则：**宿主模式下组件铺满容器**，尺寸完全由窗口
+   决定。用户只要拖卡片即可，插件不需要（也无法）自己定尺寸。
+   所有 sz-* 档位在宿主模式下失效；画廊预览（?view=compact）仍保留
+   档位，那里组件是页面主角，需要一个明确的大小。
+   ============================================================ */
+html.pl-host .cw,
+html.pl-host .cw.sz-mini,
+html.pl-host .cw.sz-square,
+html.pl-host .cw.sz-wide,
+html.pl-host .cw.sz-tall,
+html.pl-host .cw.sz-banner {
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  max-height: none;
+  border-radius: 0;
+}
+
+/* 舞台层也铺满，去掉居中留白 */
+html.pl-host .cw-stage {
+  padding: 0;
+  display: block;
+  overflow: hidden;
+}

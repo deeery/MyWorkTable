@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>药品管家 · 服药提醒</title>
+<link rel="stylesheet" href="../assets/theme.css">
+<link rel="stylesheet" href="../assets/compact.css">
+<style>
+  :root { --accent: #f97316; --accent-2: #fb923c; }
+  .dose { display: flex; align-items: center; gap: 10px; padding: 9px 11px; border-radius: 11px;
+          background: var(--surface-2); border: 1px solid var(--border); transition: .25s; }
+  .dose.due { border-color: color-mix(in srgb, var(--warn) 50%, transparent); background: color-mix(in srgb, var(--warn) 12%, transparent); }
+  .dose.taken { opacity: .58; }
+  .dose.missed { border-color: color-mix(in srgb, var(--danger) 45%, transparent); }
+  .dose .tm { font-family: var(--mono); font-size: 13px; font-weight: 700; width: 42px; }
+  .stock { height: 5px; border-radius: 99px; background: color-mix(in srgb, var(--muted) 25%, transparent); overflow: hidden; width: 54px; }
+  .stock > i { display: block; height: 100%; background: var(--ok); transition: width .4s; }
+  .stock.low > i { background: var(--danger); }
+  .cd { font-family: var(--mono); font-size: 26px; font-weight: 700; letter-spacing: -.5px; }
+</style>
+</head>
+<body>
+<div class="win" style="--w:420px">
+  <header class="win-head">
+    <div class="lights"><i></i><i></i><i></i></div>
+    <div class="win-title"><span class="ico">💊</span>药品管家<span class="win-sub">服药提醒</span></div>
+    <div class="spacer"></div>
+    <span class="badge" id="clock">--:--</span>
+  </header>
+
+  <div class="win-body">
+    <div class="card row between">
+      <div class="col" style="gap:2px">
+        <span class="small muted">下一次服药</span>
+        <b id="nextName" style="font-size:14px">—</b>
+        <span class="cd" id="cd">--:--</span>
+      </div>
+      <div class="ring" id="ring" style="--size:104px;--thick:10px">
+        <div><b id="adh">0%</b><span>今日依从率</span></div>
+      </div>
+    </div>
+
+    <div class="stats">
+      <div class="card stat"><b id="s1">0/0</b><span>今日已服</span></div>
+      <div class="card stat"><b id="s2">0</b><span>药品数量</span></div>
+      <div class="card stat"><b id="s3">0</b><span>库存告警</span></div>
+    </div>
+
+    <div class="row between">
+      <span class="small bold">今日服药时间轴</span>
+      <span class="tiny muted" id="today"></span>
+    </div>
+    <div class="list scroll" id="timeline" style="--scroll-h:186px"></div>
+
+    <div class="row between" style="margin-top:2px">
+      <span class="small bold">药品清单</span>
+      <button class="btn sm" id="demo">⏰ 模拟到点</button>
+    </div>
+    <div class="list" id="meds"></div>
+  </div>
+
+  <footer class="win-foot">
+    <span class="dot live"></span><span id="foot">提醒服务运行中</span>
+    <div class="spacer" style="flex:1"></div>
+    <span class="tiny">预览版 · 数据存本地</span>
+  </footer>
+</div>
+
+<script src="../assets/pl.js"></script>
+<script src="../assets/compact.js"></script>
+<script>
+(function () {
+  const { $, $$, toast, notify, beep, store, pad, today } = PL;
+
+  let meds = store.get('meds', [
+    { id: 1, name: '维生素 D3', dose: '1 粒', times: ['08:00', '20:00'], stock: 18, cap: 30, icon: '💊', color: '#f97316' },
+    { id: 2, name: '降压药',   dose: '半片', times: ['07:30', '19:30'], stock: 5,  cap: 20, icon: '🩹', color: '#ef4444' },
+    { id: 3, name: '护胃片',   dose: '2 粒', times: ['12:30'],          stock: 24, cap: 40, icon: '🌿', color: '#22c55e' }
+  ]);
+  let taken = store.get('taken-' + today(), {});   // { 'medId@time': true }
+  let demoAt = 0;                                   // 演示用「虚拟到点」时间戳
+
+  const save = () => { store.set('meds', meds); store.set('taken-' + today(), taken); };
+
+  /* 展开今日全部服药点 */
+  function doses() {
+    const out = [];
+    meds.forEach(m => m.times.forEach(t => out.push({ med: m, time: t, key: m.id + '@' + t })));
+    return out.sort((a, b) => a.time.localeCompare(b.time));
+  }
+  const toMin = t => +t.slice(0, 2) * 60 + +t.slice(3);
+  const nowMin = () => { const d = new Date(); return d.getHours() * 60 + d.getMinutes() + d.getSeconds() / 60; };
+
+  function nextDose() {
+    const list = doses().filter(d => !taken[d.key] && toMin(d.time) > nowMin() - 0.5);
+    return list[0] || null;
+  }
+
+  function render() {
+    const list = doses(), done = list.filter(d => taken[d.key]).length;
+    const pct = list.length ? Math.round(done / list.length * 100) : 0;
+    $('#ring').style.setProperty('--p', pct);
+    $('#adh').textContent = pct + '%';
+    $('#s1').textContent = done + '/' + list.length;
+    $('#s2').textContent = meds.length;
+    $('#s3').textContent = meds.filter(m => m.stock <= 6).length;
+    $('#today').textContent = today();
+
+    /* 时间轴 */
+    const tl = $('#timeline'); tl.innerHTML = '';
+    if (!list.length) tl.innerHTML = '<div class="empty">还没有药品喵~</div>';
+    list.forEach(d => {
+      const isTaken = !!taken[d.key];
+      const past = toMin(d.time) < nowMin() - 30;
+      const state = isTaken ? 'taken' : (past ? 'missed' : (Math.abs(toMin(d.time) - nowMin()) < 60 ? 'due' : ''));
+      const el = document.createElement('div');
+      el.className = 'dose ' + state;
+      el.innerHTML =
+        '<span class="tm">' + d.time + '</span>' +
+        '<div class="av" style="background:' + d.med.color + '22">' + d.med.icon + '</div>' +
+        '<div class="grow"><div class="t" style="font-size:12.5px;font-weight:650">' + d.med.name + ' · ' + d.med.dose + '</div>' +
+        '<div class="s tiny muted">' + (isTaken ? '已服用' : past ? '已错过，请尽快补服' : '待服用') + '</div></div>' +
+        (isTaken
+          ? '<span class="badge ok">已服</span>'
+          : '<button class="btn sm primary" data-take="' + d.key + '">服用</button>');
+      tl.appendChild(el);
+    });
+    $$('#timeline [data-take]').forEach(b => b.onclick = () => take(b.dataset.take));
+
+    /* 药品清单 */
+    const box = $('#meds'); box.innerHTML = '';
+    meds.forEach(m => {
+      const low = m.stock <= 6;
+      const el = document.createElement('div');
+      el.className = 'item';
+      el.innerHTML =
+        '<div class="av" style="background:' + m.color + '22">' + m.icon + '</div>' +
+        '<div class="grow"><div class="t">' + m.name + ' <span class="tiny muted">' + m.dose + '</span></div>' +
+        '<div class="s">' + m.times.join(' / ') + ' · 剩余 ' + m.stock + ' 次</div></div>' +
+        '<div class="stock ' + (low ? 'low' : '') + '"><i style="width:' + Math.min(100, m.stock / m.cap * 100) + '%"></i></div>' +
+        '<button class="btn sm" data-refill="' + m.id + '">补货</button>';
+      box.appendChild(el);
+    });
+    $$('#meds [data-refill]').forEach(b => b.onclick = () => {
+      const m = meds.find(x => x.id == b.dataset.refill);
+      m.stock = m.cap; save(); render(); toast(m.name + ' 已补货至 ' + m.cap + ' 次', 'ok');
+    });
+  }
+
+  function take(key) {
+    const [id, time] = key.split('@');
+    const m = meds.find(x => x.id == id);
+    taken[key] = true;
+    if (m && m.stock > 0) m.stock--;
+    if (m && m.stock === 0) toast(m.name + ' 已用完，记得补货', 'warn');
+    PL.chime(); toast('已记录：' + (m ? m.name : '药品') + ' ' + time, 'ok');
+    save(); render();
+  }
+
+  /* 倒计时（每秒） */
+  setInterval(() => {
+    const d = new Date();
+    $('#clock').textContent = pad(d.getHours()) + ':' + pad(d.getMinutes());
+
+    let left, label;
+    if (demoAt && demoAt > Date.now()) {
+      left = (demoAt - Date.now()) / 1000; label = '演示提醒（维生素 D3）';
+    } else {
+      const n = nextDose();
+      const all = doses();
+      const doneAll = all.length > 0 && all.every(d => taken[d.key]);
+      if (n) { left = (toMin(n.time) - nowMin()) * 60; label = n.med.name + ' · ' + n.time; }
+      else if (doneAll) { left = 0; label = '今日全部已服 ✓'; }
+      else if (!all.length) { left = 0; label = '还没有药品'; }
+      else { left = 0; label = '今日服药时段已结束'; }
+    }
+    if (left <= 0 && label !== '今日全部已服 ✓' && label !== '今日服药时段已结束' && label !== '还没有药品') {
+      const n = nextDose();
+      if (n) { fire(n.med, n.time); }
+      demoAt = 0;
+    } else {
+      const s = Math.max(0, Math.floor(left));
+      $('#cd').textContent = (s >= 3600 ? Math.floor(s / 3600) + ':' + pad(Math.floor(s % 3600 / 60)) : pad(Math.floor(s / 60))) + ':' + pad(s % 60);
+      $('#nextName').textContent = label;
+      $('#foot').textContent = '提醒服务运行中 · 下次 ' + $('#cd').textContent + ' 后';
+    }
+    PL.compactRefreshAll();
+  }, 1000);
+
+  let lastFire = 0;
+  function fire(med, time) {
+    if (Date.now() - lastFire < 5000) return;
+    lastFire = Date.now();
+    PL.chime(); setTimeout(() => PL.chime(), 600);
+    notify('💊 该服药啦：' + med.name, time + ' · ' + med.dose);
+    toast('到点提醒：' + med.name + ' ' + med.dose, 'warn', 4200);
+  }
+
+  $('#demo').onclick = () => {
+    demoAt = Date.now() + 8000;
+    toast('已设定 8 秒后触发一次提醒演示', 'ok');
+  };
+  document.body.addEventListener('click', e => { if (e.target.id === 'demo') {} });
+
+  render();
+
+  /* ============================================================
+     桌面精简形态：下次服药 / 今日进度 / 服药点清单
+     ============================================================ */
+  const cwf = PL.cwf;
+
+  /** 下次服药（无未来服药点时退回最后一个） */
+  function nextOrLast() {
+    const list = doses();
+    return list.filter(d => !taken[d.key] && toMin(d.time) > nowMin() - 0.5)[0] || list[list.length - 1] || null;
+  }
+
+  PL.compact({
+    id: 'medication-reminder',
+    name: '药品管家',
+    icon: '💊',
+    defFormat: 'clock',
+    defSize: 'square',
+    data: () => ({ meds, taken, doses: doses() }),
+    formats: [
+      {
+        id: 'clock',
+        name: '下次服药',
+        icon: '⏰',
+        options: [
+          { key: 'showName', type: 'bool', label: '显示药品名', def: true },
+          { key: 'showDose', type: 'bool', label: '显示剂量', def: false },
+        ],
+        render: (o) => {
+          const nx = nextOrLast();
+          if (!nx) return cwf.clock({ time: '--:--', sec: '', name: '暂无服药点' });
+          return cwf.clock({
+            time: nx.time,
+            sec: o.showName === false ? '' : nx.med.name,
+            name: o.showDose ? nx.med.dose : '',
+          });
+        },
+      },
+      {
+        id: 'ring',
+        name: '今日进度',
+        icon: '⭕',
+        options: [
+          { key: 'label', type: 'text', label: '标签文字', def: '今日依从' },
+        ],
+        render: (o) => {
+          const list = doses();
+          const done = list.filter(d => taken[d.key]).length;
+          const pct = list.length ? Math.round(done / list.length * 100) : 0;
+          return cwf.ring({ pct, label: o.label || '今日依从' });
+        },
+      },
+      {
+        id: 'list',
+        name: '服药点',
+        icon: '📋',
+        options: [
+          { key: 'max', type: 'num', label: '显示条数', def: 3, min: 2, max: 5 },
+          { key: 'onlyLeft', type: 'bool', label: '只看未服', def: true },
+        ],
+        render: (o) => {
+          let list = doses();
+          if (o.onlyLeft) list = list.filter(d => !taken[d.key]);
+          const rows = list.map(d => ({
+            icon: taken[d.key] ? '✅' : '💊',
+            text: d.med.name,
+            right: d.time,
+          }));
+          return cwf.list({ rows, max: Number(o.max) || 3 });
+        },
+      },
+    ],
+  });
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,556 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>音量混合器 · 分应用音量</title>
+<link rel="stylesheet" href="../assets/theme.css">
+<link rel="stylesheet" href="../assets/compact.css">
+<style>
+  /* 本插件专属配色：只覆盖这两个变量，其余组件自动跟随 */
+  :root { --accent: #8b5cf6; --accent-2: #a78bfa; }
+
+  /* 均衡器可视化条 */
+  .eq { display: flex; align-items: flex-end; gap: 3px; height: 58px; padding: 7px 9px;
+        border-radius: 10px; border: 1px solid var(--border);
+        background: color-mix(in srgb, var(--accent) 9%, var(--surface-2)); }
+  .eq i { flex: 1 1 0; height: 8%; min-height: 3px; border-radius: 3px;
+          background: linear-gradient(180deg, var(--accent-2), var(--accent));
+          transition: height .1s linear; }
+
+  /* 单个应用通道 */
+  .app { display: flex; align-items: center; gap: 9px; padding: 9px 11px;
+         background: var(--surface-2); border: 1px solid var(--border);
+         border-radius: var(--radius-sm); transition: opacity .2s, border-color .2s; }
+  .app:hover { border-color: color-mix(in srgb, var(--accent) 30%, transparent); }
+  .app.mute { opacity: .5; }
+  .app .av { width: 30px; height: 30px; border-radius: 9px; display: grid; place-items: center;
+             font-size: 15px; background: var(--accent-soft); flex: none; }
+  .app .pv { font-family: var(--mono); font-size: 11px; width: 30px; text-align: right;
+             display: inline-block; }
+  .app .eff { color: var(--muted); }
+
+  .big { font-size: 21px; font-weight: 700; letter-spacing: -.5px; display: inline-block; }
+  .flash { animation: flash .34s ease; }
+  @keyframes flash { 40% { transform: scale(1.18); color: var(--accent); } }
+</style>
+</head>
+<body>
+<div class="win" style="--w:420px">
+  <header class="win-head">
+    <div class="lights"><i></i><i></i><i></i></div>
+    <div class="win-title"><span class="ico">🎚️</span>音量混合器<span class="win-sub">分应用音量</span></div>
+    <div class="spacer"></div>
+    <span class="badge" id="headBadge">🔊 已连接</span>
+  </header>
+
+  <div class="win-body">
+    <!-- 主音量 -->
+    <div class="card col">
+      <div class="row between">
+        <div class="row" style="gap:9px">
+          <button class="btn icon" id="masterMute" title="主音量静音切换">🔊</button>
+          <div class="col" style="gap:1px">
+            <span class="small bold">主音量</span>
+            <span class="tiny muted" id="outName">扬声器 · Realtek HD Audio</span>
+          </div>
+        </div>
+        <b class="big mono" id="masterVal">70%</b>
+      </div>
+      <input type="range" id="master" min="0" max="100" step="1" value="70" aria-label="主音量">
+      <div class="row between">
+        <span class="tiny muted">实时峰值</span>
+        <div class="bar thin grow" style="max-width:168px"><i id="peakBar"></i></div>
+        <span class="tiny mono muted" id="peakTxt">-∞ dB</span>
+      </div>
+    </div>
+
+    <!-- 均衡器 -->
+    <div class="card col" style="gap:8px">
+      <div class="row between">
+        <span class="small bold">均衡器</span>
+        <span class="tiny muted" id="eqState">动态响应中</span>
+      </div>
+      <div class="eq" id="eq"></div>
+    </div>
+
+    <!-- 音效预设 -->
+    <div class="row between">
+      <span class="small bold">音效预设</span>
+      <span class="tiny muted">切换会同时调整多路音量</span>
+    </div>
+    <div class="chips" id="presets"></div>
+
+    <!-- 应用通道 -->
+    <div class="row between">
+      <span class="small bold">应用音量</span>
+      <div class="row" style="gap:6px">
+        <button class="btn sm" id="addApp">＋ 添加通道</button>
+        <button class="btn sm" id="muteAll">全部静音</button>
+      </div>
+    </div>
+    <div class="list" id="apps"></div>
+
+    <!-- 输出设备 -->
+    <div class="field">
+      <span>输出设备</span>
+      <select id="devSel"></select>
+    </div>
+  </div>
+
+  <footer class="win-foot">
+    <span class="dot live"></span><span id="foot">输出正常</span>
+    <div class="spacer" style="flex:1"></div>
+    <span class="tiny">预览版 · 数据存本地</span>
+  </footer>
+</div>
+
+<script src="../assets/pl.js"></script>
+<script src="../assets/compact.js"></script>
+<script>
+(function () {
+  const { $, $$, toast, beep, store, clamp, fmtClock } = PL;
+
+  /* ---------------- 静态数据 ---------------- */
+  // 全部可用的应用通道；默认只打开前 4 个，其余用「＋ 添加通道」加入
+  const CATALOG = [
+    { id: 'browser', name: '浏览器',     icon: '🌐', vol: 45, def: true },
+    { id: 'music',   name: '音乐播放器', icon: '🎵', vol: 90, def: true },
+    { id: 'meet',    name: '会议软件',   icon: '📹', vol: 30, def: true },
+    { id: 'game',    name: '游戏',       icon: '🎮', vol: 40, def: true },
+    { id: 'sys',     name: '系统提示音', icon: '🔔', vol: 60, def: false },
+    { id: 'podcast', name: '播客',       icon: '📻', vol: 55, def: false },
+    { id: 'record',  name: '录音笔',     icon: '🎙️', vol: 35, def: false },
+    { id: 'edit',    name: '视频剪辑',   icon: '🎬', vol: 50, def: false }
+  ];
+  const APP = CATALOG.reduce(function (o, a) { o[a.id] = a; return o; }, {});
+  const DEFAULT_IDS = CATALOG.filter(function (a) { return a.def; }).map(function (a) { return a.id; });
+
+  const PRESETS = [
+    { id: 'music', name: '音乐', icon: '🎵', master: 72, vol: { browser: 45, music: 92, meet: 30, game: 40, sys: 60, podcast: 70, record: 35, edit: 50 } },
+    { id: 'movie', name: '电影', icon: '🎬', master: 80, vol: { browser: 35, music: 70, meet: 25, game: 55, sys: 45, podcast: 60, record: 30, edit: 55 } },
+    { id: 'game',  name: '游戏', icon: '🎮', master: 66, vol: { browser: 20, music: 55, meet: 15, game: 95, sys: 50, podcast: 40, record: 25, edit: 35 } },
+    { id: 'voice', name: '人声', icon: '🎙️', master: 60, vol: { browser: 60, music: 35, meet: 95, game: 25, sys: 40, podcast: 85, record: 80, edit: 60 } }
+  ];
+  const DEVICES = [
+    { id: 'spk', name: '扬声器 · Realtek HD Audio', icon: '🔊' },
+    { id: 'hp',  name: '耳机 · WH-1000XM5',         icon: '🎧' },
+    { id: 'bt',  name: '蓝牙音箱 · JBL Flip 6',     icon: '📻' }
+  ];
+
+  /* ---------------- 状态（容错读取本地存储） ---------------- */
+  const saved = store.get('volume-mixer', null) || {};
+  const state = {
+    master: typeof saved.master === 'number' ? clamp(saved.master, 0, 100) : 70,
+    masterMute: !!saved.masterMute,
+    dev: DEVICES.some(function (d) { return d.id === saved.dev; }) ? saved.dev : 'spk',
+    preset: PRESETS.some(function (p) { return p.id === saved.preset; }) ? saved.preset : 'music',
+    // 每个应用：{ vol, mute, on }，on=false 表示通道已移除
+    apps: CATALOG.reduce(function (o, a) {
+      const s = (saved.apps || {})[a.id] || {};
+      o[a.id] = {
+        vol: typeof s.vol === 'number' ? clamp(s.vol, 0, 100) : a.vol,
+        mute: !!s.mute,
+        on: typeof s.on === 'boolean' ? s.on : a.def
+      };
+      return o;
+    }, {})
+  };
+  const save = function () { store.set('volume-mixer', state); };
+
+  /* ---------------- 元素引用 ---------------- */
+  const elMaster     = $('#master');
+  const elMasterVal  = $('#masterVal');
+  const elMasterMute = $('#masterMute');
+  const elApps       = $('#apps');
+  const elEq         = $('#eq');
+  const elEqState    = $('#eqState');
+  const elPresets    = $('#presets');
+  const elDevSel     = $('#devSel');
+  const elPeakBar    = $('#peakBar');
+  const elPeakTxt    = $('#peakTxt');
+  const elOutName    = $('#outName');
+  const elHeadBadge  = $('#headBadge');
+  const elFoot       = $('#foot');
+  const elMuteAll    = $('#muteAll');
+  const elAddApp     = $('#addApp');
+
+  /* ---------------- 构建界面 ---------------- */
+  // 均衡器条：先创建并持有引用，定时器只改高度
+  const bars = [];
+  for (let i = 0; i < 22; i++) {
+    const b = document.createElement('i');
+    elEq.appendChild(b);
+    bars.push(b);
+  }
+
+  DEVICES.forEach(function (d) {
+    const o = document.createElement('option');
+    o.value = d.id;
+    o.textContent = d.icon + ' ' + d.name;
+    elDevSel.appendChild(o);
+  });
+  elDevSel.value = state.dev;
+
+  PRESETS.forEach(function (p) {
+    const c = document.createElement('button');
+    c.className = 'chip' + (state.preset === p.id ? ' on' : '');
+    c.dataset.preset = p.id;
+    c.textContent = p.icon + ' ' + p.name;
+    elPresets.appendChild(c);
+  });
+  $$('#presets .chip').forEach(function (c) {
+    c.onclick = function () { applyPreset(c.dataset.preset); };
+  });
+
+  /* ---------------- 渲染 ---------------- */
+  // 数值变化时闪一下；计时器存在元素上，避免快速连续触发时互相覆盖
+  function flash(el) {
+    if (!el) return;
+    el.classList.remove('flash');
+    void el.offsetWidth;                 // 强制重排以重启动画
+    el.classList.add('flash');
+    clearTimeout(el._flashT);
+    el._flashT = setTimeout(function () { el.classList.remove('flash'); }, 360);
+  }
+
+  const activeIds = function () {
+    return CATALOG.filter(function (a) { return state.apps[a.id].on; }).map(function (a) { return a.id; });
+  };
+
+  // 应用的实际输出 = 应用音量 × 主音量（主音量静音或应用静音时为 0）
+  function effective(id) {
+    const s = state.apps[id];
+    if (!s.on || s.mute || state.masterMute) return 0;
+    return Math.round(s.vol * state.master / 100);
+  }
+
+  function renderMaster() {
+    elMaster.value = state.master;
+    elMasterVal.textContent = state.master + '%';
+    elMasterMute.textContent = state.masterMute ? '🔇' : '🔊';
+    elMasterMute.classList.toggle('danger', state.masterMute);
+    elEqState.textContent = state.masterMute ? '已静音'
+      : state.master < 20 ? '低音量输出' : '动态响应中';
+    renderEffective();          // 主音量变化会即时反映到各应用的实际输出
+  }
+
+  // 只更新百分比文字，不重建 DOM（滑块拖动时保持流畅）
+  function renderEffective() {
+    activeIds().forEach(function (id) {
+      const el = elApps.querySelector('[data-eff="' + id + '"]');
+      if (!el) return;
+      const e = effective(id);
+      el.textContent = e + '%';
+      el.style.color = e === 0 ? 'var(--danger)' : '';
+    });
+  }
+
+  function renderApps() {
+    const ids = activeIds();
+    elApps.innerHTML = '';
+
+    if (!ids.length) {
+      elApps.innerHTML = '<div class="empty">所有应用通道都被移除啦喵~<br>' +
+        '<span class="tiny">点上方「＋ 添加通道」把应用加回来</span></div>';
+    }
+
+    ids.forEach(function (id) {
+      const a = APP[id], s = state.apps[id];
+      const el = document.createElement('div');
+      el.className = 'app' + (s.mute ? ' mute' : '');
+      el.dataset.app = id;
+      el.innerHTML =
+        '<div class="av">' + a.icon + '</div>' +
+        '<div class="grow col" style="gap:4px">' +
+          '<div class="row between">' +
+            '<span class="small bold">' + a.name + '</span>' +
+            '<span><span class="pv" data-pv="' + id + '">' + s.vol + '%</span>' +
+            '<span class="tiny muted"> → 输出 </span>' +
+            '<span class="pv eff" data-eff="' + id + '">' + effective(id) + '%</span></span>' +
+          '</div>' +
+          '<input type="range" min="0" max="100" step="1" value="' + s.vol +
+            '" data-vol="' + id + '" aria-label="' + a.name + '音量">' +
+        '</div>' +
+        '<button class="btn sm icon" data-mute="' + id + '" title="静音切换">' + (s.mute ? '🔇' : '🔊') + '</button>' +
+        '<button class="btn sm icon ghost" data-close="' + id + '" title="移除该通道">✕</button>';
+      elApps.appendChild(el);
+
+      const range = el.querySelector('[data-vol]');
+      range.addEventListener('input', function () { setAppVol(id, +range.value); });
+      el.querySelector('[data-mute]').onclick = function () { toggleAppMute(id); };
+      el.querySelector('[data-close]').onclick = function () { removeApp(id); };
+    });
+
+    const muted = ids.filter(function (id) { return state.apps[id].mute; }).length;
+    elMuteAll.textContent = (ids.length && muted === ids.length) ? '取消全部静音' : '全部静音';
+    elAddApp.textContent = ids.length >= CATALOG.length ? '＋ 通道已满' : '＋ 添加通道';
+    renderEffective();
+  }
+
+  function renderDevice() {
+    const d = DEVICES.filter(function (x) { return x.id === state.dev; })[0] || DEVICES[0];
+    elOutName.textContent = d.name;
+    elHeadBadge.textContent = d.icon + ' 已连接';
+  }
+
+  /* ---------------- 操作 ---------------- */
+  function setMaster(v, quiet) {
+    state.master = clamp(Math.round(v), 0, 100);
+    if (state.master > 0 && state.masterMute) state.masterMute = false;  // 拉动主滑块自动取消静音
+    renderMaster();
+    save();
+    flash(elMasterVal);
+    if (!quiet) toast('主音量 ' + state.master + '%', 'info', 1400);
+  }
+
+  function setAppVol(id, v) {
+    const s = state.apps[id];
+    s.vol = clamp(Math.round(v), 0, 100);
+    if (s.vol > 0 && s.mute) s.mute = false;   // 拉动滑块自动解除静音
+    const el = elApps.querySelector('[data-pv="' + id + '"]');
+    if (el) { el.textContent = s.vol + '%'; flash(el); }
+    if (s.mute) renderApps(); else renderEffective();
+    const btn = elApps.querySelector('[data-mute="' + id + '"]');
+    const row = elApps.querySelector('[data-app="' + id + '"]');
+    if (btn) { btn.textContent = '🔊'; btn.classList.remove('danger'); }
+    if (row) row.classList.remove('mute');
+    save();
+  }
+
+  function toggleAppMute(id) {
+    const s = state.apps[id], a = APP[id];
+    s.mute = !s.mute;
+    renderApps();
+    save();
+    beep(s.mute ? 300 : 700, .09, 'triangle');
+    toast(a.name + (s.mute ? ' 已静音' : ' 已恢复 ' + s.vol + '%'), s.mute ? 'warn' : 'ok', 1600);
+  }
+
+  function removeApp(id) {
+    const a = APP[id];
+    state.apps[id].on = false;
+    renderApps();
+    save();
+    toast('已移除「' + a.name + '」的混音通道', 'warn');
+  }
+
+  function applyPreset(pid) {
+    const p = PRESETS.filter(function (x) { return x.id === pid; })[0];
+    if (!p) return;
+    state.preset = pid;
+    state.master = p.master;
+    state.masterMute = false;
+    // 预设只作用于当前存在的通道，不会悄悄把移除的应用加回来
+    let n = 0;
+    activeIds().forEach(function (id) {
+      if (typeof p.vol[id] === 'number') { state.apps[id].vol = p.vol[id]; state.apps[id].mute = false; n++; }
+    });
+    $$('#presets .chip').forEach(function (c) { c.classList.toggle('on', c.dataset.preset === pid); });
+    renderMaster();
+    renderApps();
+    save();
+    PL.chime();
+    toast('已套用「' + p.name + '」预设：主音量 ' + p.master + '% + ' + n + ' 路通道', 'ok');
+  }
+
+  /* ---------------- 事件绑定 ---------------- */
+  elMaster.addEventListener('input', function () { setMaster(+elMaster.value, true); });
+  elMaster.addEventListener('change', function () { toast('主音量已设为 ' + state.master + '%', 'ok', 1400); });
+
+  elMasterMute.onclick = function () {
+    state.masterMute = !state.masterMute;
+    renderMaster();
+    renderApps();
+    save();
+    beep(state.masterMute ? 300 : 680, .1, 'triangle');
+    toast(state.masterMute ? '主音量已静音 🔇' : '主音量已恢复 ' + state.master + '%',
+      state.masterMute ? 'warn' : 'ok', 1600);
+  };
+
+  elMuteAll.onclick = function () {
+    const ids = activeIds();
+    if (!ids.length) { toast('先添加一个应用通道喵~', 'warn'); return; }
+    const allMuted = ids.every(function (id) { return state.apps[id].mute; });
+    ids.forEach(function (id) { state.apps[id].mute = !allMuted; });
+    renderApps();
+    save();
+    toast(allMuted ? '已恢复全部应用音量' : '已静音全部应用（可再次点击恢复）', allMuted ? 'ok' : 'warn');
+  };
+
+  elAddApp.onclick = function () {
+    const off = CATALOG.filter(function (a) { return !state.apps[a.id].on; });
+    if (!off.length) { toast('所有应用通道都已经添加啦喵~', 'warn'); return; }
+    const a = off[0];
+    state.apps[a.id].on = true;
+    renderApps();
+    save();
+    beep(700, .08);
+    toast('已添加「' + a.name + '」混音通道', 'ok');
+  };
+
+  elDevSel.addEventListener('change', function () {
+    state.dev = elDevSel.value;
+    renderDevice();
+    save();
+    beep(520, .09);
+    const d = DEVICES.filter(function (x) { return x.id === state.dev; })[0] || DEVICES[0];
+    toast('输出已切换到 ' + d.name, 'ok');
+  });
+
+  /* ---------------- 随时间变化的均衡器与峰值 ---------------- */
+  // 均衡器基准 = 各通道实际输出的加权值，拖动任意滑块都会立刻改变跳动幅度
+  function eqBase() {
+    if (state.masterMute) return 0;
+    const ids = activeIds();
+    if (!ids.length) return 0;
+    let max = 0, sum = 0;
+    ids.forEach(function (id) {
+      const e = effective(id);
+      if (e > max) max = e;
+      sum += e;
+    });
+    return (max * 0.6 + (sum / ids.length) * 0.4) / 100;
+  }
+
+  setInterval(function () {
+    const base = eqBase();
+    const t = Date.now();
+    for (let i = 0; i < bars.length; i++) {
+      const shape = 0.42 + 0.58 * Math.abs(Math.sin(t / 420 + i * 0.55));
+      const h = base * shape * (0.55 + Math.random() * 0.6);
+      bars[i].style.height = (3 + h * 97).toFixed(1) + '%';
+    }
+    const peak = Math.round(base * (58 + Math.random() * 42));
+    elPeakBar.style.width = peak + '%';
+    elPeakTxt.textContent = peak > 4 ? '-' + Math.round(62 - peak * 0.56) + ' dB' : '-∞ dB';
+
+    const d = DEVICES.filter(function (x) { return x.id === state.dev; })[0] || DEVICES[0];
+    const ids = activeIds();
+    let loud = null;
+    ids.forEach(function (id) {
+      const e = effective(id);
+      if (!loud || e > loud.e) loud = { id: id, e: e };
+    });
+    elFoot.textContent = (state.masterMute ? '已静音 · ' : '') + d.icon + ' ' +
+      d.name.split(' · ')[0] + (loud ? ' · 最响 ' + APP[loud.id].name + ' ' + loud.e + '%' : ' · 无通道') +
+      ' · ' + fmtClock();
+
+    // 精简组件不必每 140ms 重绘（该间隔只用于频谱动画），约每 1.4 秒同步一次
+    if (!window.__cwTick) window.__cwTick = 0;
+    if (++window.__cwTick % 10 === 0) PL.compactRefreshAll();
+  }, 140);
+
+  /* ---------------- 初始化 ---------------- */
+  renderMaster();
+  renderApps();
+  renderDevice();
+  save();
+
+  /* ============================================================
+     桌面精简形态：主音量滑块 / 某应用音量 / 设备与预设
+     ============================================================ */
+  const cwf = PL.cwf;
+
+  /** 精简组件里可直接拖动的音量滑块 */
+  function sliderFmt(o) {
+    const isMaster = o.target === 'master';
+    const appId = o.target;
+    const app = APP[appId];
+    const val = isMaster ? state.master : (state.apps[appId] ? state.apps[appId].vol : 0);
+    const icon = isMaster ? '🔊' : (app ? app.icon : '🎚️');
+    const label = isMaster ? '主音量' : (app ? app.name : appId);
+    const muted = isMaster ? state.masterMute : (state.apps[appId] && state.apps[appId].mute);
+
+    return {
+      cls: 'cw-slider',
+      html: '<div class="hd"><span class="ic">' + icon + '</span>' +
+            '<span class="nm">' + label + (muted ? ' · 静音' : '') + '</span>' +
+            '<span class="v">' + val + '%</span></div>' +
+            '<input type="range" min="0" max="100" value="' + val + '">',
+      onMount: (face, opts, refresh) => {
+        const inp = face.querySelector('input[type="range"]');
+        if (!inp) return;
+        // 拖动时不冒泡到正面点击（避免打开完整窗口）
+        inp.addEventListener('click', e => e.stopPropagation());
+        inp.addEventListener('input', e => {
+          const v = Number(e.target.value);
+          if (isMaster) state.master = v;
+          else if (state.apps[appId]) state.apps[appId].vol = v;
+          const lab = face.querySelector('.v');
+          if (lab) lab.textContent = v + '%';
+          save();
+        });
+        inp.addEventListener('change', e => {
+          const v = Number(e.target.value);
+          beep(520 + v * 4, .06);
+          toast(label + ' → ' + v + '%', 'ok');
+          // 同步完整窗口
+          if (typeof renderMaster === 'function') renderMaster();
+          if (typeof renderApps === 'function') renderApps();
+        });
+      },
+    };
+  }
+
+  PL.compact({
+    id: 'volume-mixer',
+    name: '音量混合器',
+    icon: '🎚️',
+    defFormat: 'slider',
+    defSize: 'wide',
+    data: () => ({ state, activeIds: activeIds() }),
+    formats: [
+      {
+        id: 'slider',
+        name: '音量滑块',
+        icon: '🎚️',
+        options: [
+          { key: 'target', type: 'select', label: '控制哪个', def: 'master',
+            options: [{ value: 'master', label: '主音量' }].concat(
+              CATALOG.map(a => ({ value: a.id, label: a.name }))
+            ) },
+        ],
+        render: (o) => sliderFmt(o),
+      },
+      {
+        id: 'stat',
+        name: '主音量数值',
+        icon: '🔊',
+        options: [
+          { key: 'label', type: 'text', label: '标签文字', def: '主音量' },
+        ],
+        render: (o) => cwf.stat({
+          value: state.masterMute ? 0 : state.master,
+          unit: '%',
+          name: (o.label || '主音量') + (state.masterMute ? ' · 已静音' : ''),
+        }),
+      },
+      {
+        id: 'list',
+        name: '各应用音量',
+        icon: '📋',
+        options: [
+          { key: 'max', type: 'num', label: '显示条数', def: 3, min: 2, max: 5 },
+        ],
+        render: (o) => {
+          const rows = activeIds().map(id => {
+            const e = effective(id);
+            return { icon: APP[id].icon, text: APP[id].name, right: e + '%' };
+          }).sort((a, b) => parseInt(b.right) - parseInt(a.right));
+          return cwf.list({ rows, max: Number(o.max) || 3 });
+        },
+      },
+    ],
+  });
+
+  /**
+   * 注册后立即刷新一次。
+   * 本插件的主循环是 140ms（频谱动画），精简刷新被节流到每 10 次一次（约 1.4s）；
+   * 若不在这里主动刷新一次，精简组件挂载后会有 1 秒多的空白外壳才出现内容。
+   */
+  PL.compactRefreshAll();
+})();
+</script>
+</body>
+</html>

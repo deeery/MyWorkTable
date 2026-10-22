@@ -1,0 +1,527 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>桌面宠物 · 插件实验室</title>
+<link rel="stylesheet" href="../assets/theme.css">
+<link rel="stylesheet" href="../assets/compact.css">
+<style>
+  /* 本插件专属配色：樱花粉 */
+  :root { --accent: #f472b6; --accent-2: #f9a8d4; }
+
+  /* ---------- 猫咪舞台 ---------- */
+  .pet-stage {
+    position: relative;
+    display: grid; place-items: center;
+    padding: 10px 0 4px;
+    border-radius: var(--radius-sm);
+    background:
+      radial-gradient(120px 70px at 50% 88%, color-mix(in srgb, var(--accent) 22%, transparent), transparent 70%),
+      linear-gradient(180deg, color-mix(in srgb, var(--accent) 8%, transparent), transparent);
+    overflow: hidden;
+  }
+  .cat-wrap { animation: breathe 3.4s ease-in-out infinite; transform-origin: 50% 92%; }
+  @keyframes breathe {
+    0%, 100% { transform: translateY(0) scale(1); }
+    50%      { transform: translateY(-5px) scale(1.022); }
+  }
+  .cat { width: 190px; height: auto; display: block; filter: drop-shadow(0 8px 12px rgba(0,0,0,.14)); }
+
+  /* 尾巴摇动 */
+  .cat .tail { transform-origin: 78% 88%; animation: tail 2.6s ease-in-out infinite; }
+  @keyframes tail { 0%, 100% { transform: rotate(-6deg); } 50% { transform: rotate(9deg); } }
+
+  /* 表情：默认只显示一组 */
+  .cat .mouth, .cat .eye-alt { opacity: 0; transition: opacity .25s; }
+  .cat.mood-normal .m-normal,
+  .cat.mood-happy  .m-happy,
+  .cat.mood-sad    .m-sad,
+  .cat.mood-sleep  .m-sleep { opacity: 1; }
+  .cat.mood-sleep .eye-open { opacity: 0; }
+  .cat.mood-sad   .eye-open { opacity: .75; }
+
+  /* 互动动画 */
+  .cat-wrap.act-eat   { animation: eat .55s ease 3; }
+  @keyframes eat { 50% { transform: translateY(-2px) scale(1.03, .97); } }
+  .cat-wrap.act-pet   { animation: purr .32s ease 6; }
+  @keyframes purr { 50% { transform: translateX(4px) rotate(1.4deg); } }
+  .cat-wrap.act-play  { animation: jump .48s cubic-bezier(.3,1.6,.5,1) 2; }
+  @keyframes jump { 40% { transform: translateY(-26px) rotate(-4deg); } 100% { transform: translateY(0); } }
+  .cat-wrap.act-sleep { animation: doze 3s ease-in-out infinite; }
+  @keyframes doze { 50% { transform: translateY(3px) scale(1.01, .98); } }
+
+  /* 睡觉时飘出的 Z */
+  .zzz { position: absolute; top: 16px; right: 34px; font-size: 15px; opacity: 0; color: var(--accent); font-weight: 700; }
+  .cat-wrap.act-sleep + .zzz { opacity: 1; animation: zzz 2.2s ease-in-out infinite; }
+  @keyframes zzz { 0% { transform: translate(0, 0) scale(.8); opacity: 0; } 40% { opacity: 1; } 100% { transform: translate(14px, -22px) scale(1.15); opacity: 0; } }
+
+  /* 气泡 */
+  .bubble {
+    position: absolute; top: 6px; left: 50%; transform: translateX(-50%) scale(.9);
+    max-width: 82%; padding: 7px 12px; font-size: 11.5px; font-weight: 600;
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 12px 12px 12px 3px; box-shadow: var(--shadow);
+    opacity: 0; transition: opacity .25s, transform .25s; pointer-events: none; text-align: center;
+  }
+  .bubble.on { opacity: 1; transform: translateX(-50%) scale(1); }
+
+  /* 状态条 */
+  .st { display: flex; flex-direction: column; gap: 4px; }
+  .st .row { gap: 6px; font-size: 11px; }
+  .st .bar > i { background: linear-gradient(90deg, var(--accent), var(--accent-2)); }
+  .st.low .bar > i { background: linear-gradient(90deg, var(--danger), #fb923c); }
+  .st.low .lab { color: var(--danger); font-weight: 700; }
+
+  .lvbar { display: flex; gap: 3px; }
+  .lvbar i { flex: 1; height: 6px; border-radius: 99px; background: color-mix(in srgb, var(--muted) 25%, transparent); }
+  .lvbar i.on { background: linear-gradient(90deg, var(--accent), var(--accent-2)); }
+</style>
+</head>
+<body>
+<div class="win" style="--w:400px">
+  <header class="win-head">
+    <div class="lights"><i></i><i></i><i></i></div>
+    <div class="win-title"><span class="ico">🐱</span>桌面宠物<span class="win-sub">喵酱养成</span></div>
+    <div class="spacer"></div>
+    <span class="badge" id="moodBadge">心情不错</span>
+  </header>
+
+  <div class="win-body">
+    <div class="pet-stage">
+      <div class="cat-wrap" id="catWrap">
+        <!-- 纯 SVG 绘制的小猫，无外链图片 -->
+        <svg class="cat mood-normal" id="cat" viewBox="0 0 200 170" role="img" aria-label="喵酱">
+          <!-- 尾巴 -->
+          <g class="tail">
+            <path d="M148 132 C176 128 186 104 172 86" fill="none" stroke="#f9a8d4" stroke-width="11" stroke-linecap="round"/>
+          </g>
+          <!-- 身体 -->
+          <ellipse cx="100" cy="126" rx="54" ry="36" fill="#fbcfe8"/>
+          <ellipse cx="100" cy="134" rx="34" ry="24" fill="#fff1f7"/>
+          <!-- 前爪 -->
+          <ellipse cx="76" cy="152" rx="15" ry="9" fill="#f9a8d4"/>
+          <ellipse cx="124" cy="152" rx="15" ry="9" fill="#f9a8d4"/>
+          <!-- 头 -->
+          <g class="head">
+            <path d="M46 62 L40 22 L76 40 Z" fill="#f9a8d4"/>
+            <path d="M154 62 L160 22 L124 40 Z" fill="#f9a8d4"/>
+            <path d="M49 57 L46 32 L69 44 Z" fill="#fbcfe8"/>
+            <path d="M151 57 L154 32 L131 44 Z" fill="#fbcfe8"/>
+            <ellipse cx="100" cy="76" rx="60" ry="50" fill="#fbcfe8"/>
+            <!-- 眼睛（睁眼） -->
+            <g class="eye-open">
+              <ellipse cx="78" cy="72" rx="9" ry="11" fill="#3b2b33"/>
+              <ellipse cx="122" cy="72" rx="9" ry="11" fill="#3b2b33"/>
+              <circle cx="81" cy="68" r="3" fill="#fff"/>
+              <circle cx="125" cy="68" r="3" fill="#fff"/>
+            </g>
+            <!-- 闭眼 / 笑眼 / 难过眼 -->
+            <path class="eye-alt m-sleep" d="M70 74 q8 7 16 0 M114 74 q8 7 16 0" fill="none" stroke="#3b2b33" stroke-width="3.4" stroke-linecap="round"/>
+            <path class="eye-alt m-happy" d="M69 76 q9 -12 18 0 M113 76 q9 -12 18 0" fill="none" stroke="#3b2b33" stroke-width="3.4" stroke-linecap="round"/>
+            <path class="eye-alt m-sad" d="M69 68 q9 10 18 3 M113 71 q9 -7 18 -3" fill="none" stroke="#3b2b33" stroke-width="3.2" stroke-linecap="round"/>
+            <!-- 鼻子 -->
+            <path d="M96 92 h8 l-4 5 z" fill="#f472b6"/>
+            <!-- 嘴 -->
+            <path class="mouth m-normal" d="M100 97 q-9 9 -15 2 M100 97 q9 9 15 2" fill="none" stroke="#3b2b33" stroke-width="2.6" stroke-linecap="round"/>
+            <path class="mouth m-happy" d="M88 97 q12 14 24 0" fill="none" stroke="#3b2b33" stroke-width="2.8" stroke-linecap="round"/>
+            <path class="mouth m-sad" d="M88 104 q12 -10 24 0" fill="none" stroke="#3b2b33" stroke-width="2.8" stroke-linecap="round"/>
+            <path class="mouth m-sleep" d="M92 100 q8 6 16 0" fill="none" stroke="#3b2b33" stroke-width="2.8" stroke-linecap="round"/>
+            <!-- 胡须 -->
+            <path d="M40 82 h-16 M40 90 l-15 5 M160 82 h16 M160 90 l15 5" fill="none" stroke="#f9a8d4" stroke-width="2.4" stroke-linecap="round"/>
+            <!-- 腮红 -->
+            <ellipse cx="60" cy="92" rx="10" ry="6" fill="#f472b6" opacity=".38"/>
+            <ellipse cx="140" cy="92" rx="10" ry="6" fill="#f472b6" opacity=".38"/>
+          </g>
+        </svg>
+      </div>
+      <div class="zzz">z Z</div>
+      <div class="bubble" id="bubble">喵~ 本喵在的喵！</div>
+    </div>
+
+    <div class="card col" style="gap:9px">
+      <div class="st" id="stMood">
+        <div class="row between"><span class="lab small bold">💗 心情</span><span class="tiny muted mono" id="vMood">80</span></div>
+        <div class="bar thin"><i id="bMood" style="width:80%"></i></div>
+      </div>
+      <div class="st" id="stHunger">
+        <div class="row between"><span class="lab small bold">🐟 饱食度</span><span class="tiny muted mono" id="vHunger">80</span></div>
+        <div class="bar thin"><i id="bHunger" style="width:80%"></i></div>
+      </div>
+      <div class="st" id="stEnergy">
+        <div class="row between"><span class="lab small bold">⚡ 精力</span><span class="tiny muted mono" id="vEnergy">80</span></div>
+        <div class="bar thin"><i id="bEnergy" style="width:80%"></i></div>
+      </div>
+    </div>
+
+    <div class="row between">
+      <div class="grow">
+        <div class="row between"><span class="small bold">亲密度 Lv.<span id="lvNum">1</span></span><span class="tiny muted">互动 <b id="cntAct">0</b> 次</span></div>
+        <div class="lvbar" id="lvBar" style="margin-top:5px"></div>
+      </div>
+    </div>
+
+    <div class="btns">
+      <button class="btn primary grow" id="btnFeed">🐟 喂食</button>
+      <button class="btn grow" id="btnPet">🤲 抚摸</button>
+      <button class="btn grow" id="btnPlay">🎾 玩耍</button>
+      <button class="btn grow" id="btnSleep">💤 睡觉</button>
+    </div>
+
+    <div class="row between">
+      <span class="small bold">互动记录</span>
+      <button class="btn sm ghost" id="btnClear">清空记录</button>
+    </div>
+    <div class="scroll" id="log" style="--scroll-h:104px"></div>
+  </div>
+
+  <footer class="win-foot">
+    <span class="dot live"></span><span id="foot">状态每 3 秒自然变化一次</span>
+    <div class="spacer" style="flex:1"></div>
+    <span class="tiny">喵酱会一直陪着你喵~</span>
+  </footer>
+</div>
+
+<script src="../assets/pl.js"></script>
+<script src="../assets/compact.js"></script>
+<script>
+(function () {
+  const { $, toast, store, beep, clamp, pick, fmtClock } = PL;
+
+  const DECAY_MS = 3000;      // 每 3 秒衰减一点
+  const MAX_LV = 6;
+
+  /* ---------------- 状态 ---------------- */
+  const def = { mood: 82, hunger: 76, energy: 88, acts: 0, sleeping: false };
+  let s = Object.assign({}, def, store.get('pet-state', {}));
+  s.mood = clamp(Number(s.mood) || 0, 0, 100);
+  s.hunger = clamp(Number(s.hunger) || 0, 0, 100);
+  s.energy = clamp(Number(s.energy) || 0, 0, 100);
+  s.acts = Number(s.acts) || 0;
+  let log = store.get('pet-log', []);
+  if (!Array.isArray(log)) log = [];
+
+  let bubbleTimer = null;
+  let animTimer = null;
+  let lowWarned = false;
+
+  const save = () => store.set('pet-state', s);
+
+  /* ---------------- 文案库 ---------------- */
+  const LINES = {
+    idle: ['喵~ 本喵在的喵！', '今天阳光真好，想晒一晒喵~', '呼噜呼噜…你在忙什么呀？', '要不要摸摸本喵的耳朵喵？', '小鱼干的味道…本喵闻到了喵！'],
+    eat: ['小鱼干最好吃了喵~ 呼噜呼噜', '呜喵！这个味道本喵喜欢！', '再来一条也不是不可以喵~'],
+    pet: ['呼噜呼噜~ 就是这里喵！', '再摸一下嘛，本喵不介意的喵~', '本喵的毛是不是很软喵？'],
+    play: ['逗猫棒！本喵抓到你了喵！', '喵呜~ 跑起来跑起来！', '再玩一会儿嘛，本喵还很有精神喵！'],
+    sleep: ['呼…呼…喵…', '别吵喵，本喵在充电中…', 'Zzz… 梦里全是小鱼干喵~'],
+    lowMood: ['本喵有点无聊了喵…陪陪我嘛', '心情down down 的喵…'],
+    lowHunger: ['肚子在咕咕叫了喵…有小鱼干吗？', '本喵饿得尾巴都没力气摇了喵…'],
+    lowEnergy: ['好困喵…眼皮好重…', '精力见底了喵，让本喵睡一会儿吧…']
+  };
+
+  /* ---------------- 渲染 ---------------- */
+  function moodFace() {
+    if (s.sleeping) return 'mood-sleep';
+    const low = Math.min(s.mood, s.hunger, s.energy);
+    if (low < 25) return 'mood-sad';
+    if (s.mood >= 70 && s.hunger >= 60 && s.energy >= 60) return 'mood-happy';
+    return 'mood-normal';
+  }
+
+  function badgeText() {
+    if (s.sleeping) return { t: '呼呼大睡', c: 'warn' };
+    const low = Math.min(s.mood, s.hunger, s.energy);
+    if (low < 25) return { t: '需要照顾', c: 'danger' };
+    if (low < 45) return { t: '有点低落', c: 'warn' };
+    return { t: '心情不错', c: 'ok' };
+  }
+
+  function setStat(barId, valId, boxId, val) {
+    $(barId).style.width = val + '%';
+    $(valId).textContent = Math.round(val);
+    const box = $(boxId);
+    if (val < 35) box.classList.add('low'); else box.classList.remove('low');
+  }
+
+  function renderStats() {
+    setStat('#bMood', '#vMood', '#stMood', s.mood);
+    setStat('#bHunger', '#vHunger', '#stHunger', s.hunger);
+    setStat('#bEnergy', '#vEnergy', '#stEnergy', s.energy);
+
+    const lv = clamp(Math.floor(s.acts / 5) + 1, 1, MAX_LV);
+    $('#lvNum').textContent = lv;
+    $('#cntAct').textContent = s.acts;
+    const bar = $('#lvBar');
+    bar.innerHTML = '';
+    for (let i = 0; i < MAX_LV; i++) {
+      const seg = document.createElement('i');
+      if (i < lv) seg.className = 'on';
+      bar.appendChild(seg);
+    }
+
+    const b = badgeText();
+    const badge = $('#moodBadge');
+    badge.textContent = b.t;
+    badge.className = 'badge ' + b.c;
+
+    const cat = $('#cat');
+    cat.setAttribute('class', 'cat ' + moodFace());
+    $('#catWrap').classList.toggle('act-sleep', !!s.sleeping);
+  }
+
+  function renderLog() {
+    const box = $('#log');
+    box.innerHTML = '';
+    if (!log.length) {
+      box.innerHTML = '<div class="empty">还没有互动记录喵~<br>喂喂本喵、摸摸本喵，这里就会热闹起来 (｡･ω･｡)</div>';
+      return;
+    }
+    log.slice(0, 12).forEach(row => {
+      const el = document.createElement('div');
+      el.className = 'item';
+      el.innerHTML = '<div class="av">' + row.ico + '</div>' +
+        '<div class="grow"><div class="t">' + row.t + '</div><div class="s">' + row.time + '</div></div>' +
+        '<span class="badge">' + row.tag + '</span>';
+      box.appendChild(el);
+    });
+  }
+
+  function render() { renderStats(); renderLog(); save(); }
+
+  /* ---------------- 气泡与动画 ---------------- */
+  function say(text, ms) {
+    const b = $('#bubble');
+    b.textContent = text;
+    b.classList.add('on');
+    if (bubbleTimer) clearTimeout(bubbleTimer);
+    bubbleTimer = setTimeout(() => b.classList.remove('on'), ms || 2600);
+  }
+
+  function play(cls, ms) {
+    const w = $('#catWrap');
+    w.classList.remove('act-eat', 'act-pet', 'act-play');
+    // 重新触发 CSS 动画
+    void w.offsetWidth;
+    w.classList.add(cls);
+    if (animTimer) clearTimeout(animTimer);
+    animTimer = setTimeout(() => w.classList.remove(cls), ms || 1400);
+  }
+
+  function pushLog(ico, t, tag) {
+    log.unshift({ ico: ico, t: t, tag: tag, time: PL.fmtClock() });
+    log = log.slice(0, 40);
+    store.set('pet-log', log);
+  }
+
+  /* ---------------- 互动 ---------------- */
+  function interact(kind) {
+    s.acts++;
+    if (kind === 'feed') {
+      if (s.hunger >= 98) { say('本喵已经吃饱啦，肚子圆圆的喵~', 2400); toast('饱食度已经满了喵', 'warn'); s.acts--; render(); return; }
+      s.hunger = clamp(s.hunger + 20, 0, 100);
+      s.mood = clamp(s.mood + 5, 0, 100);
+      s.sleeping = false;
+      play('act-eat', 1700);
+      say(pick(LINES.eat));
+      beep(720, .1); setTimeout(() => beep(960, .12), 110);
+      pushLog('🐟', '喂了一条小鱼干', '饱食 +20');
+      toast('喵酱吃得很开心', 'ok');
+    } else if (kind === 'pet') {
+      s.mood = clamp(s.mood + 14, 0, 100);
+      s.energy = clamp(s.energy + 2, 0, 100);
+      play('act-pet', 1900);
+      say(pick(LINES.pet));
+      beep(560, .16);
+      pushLog('🤲', '温柔地抚摸了一会儿', '心情 +14');
+      toast('呼噜呼噜~ 亲密度上升', 'ok');
+    } else if (kind === 'play') {
+      if (s.energy < 15) { say('本喵太累了喵…先让本喵睡一会儿好不好', 2600); toast('精力不足，先睡一觉吧喵', 'warn'); s.acts--; render(); return; }
+      s.mood = clamp(s.mood + 18, 0, 100);
+      s.energy = clamp(s.energy - 14, 0, 100);
+      s.hunger = clamp(s.hunger - 7, 0, 100);
+      s.sleeping = false;
+      play('act-play', 1200);
+      say(pick(LINES.play));
+      beep(880, .09); setTimeout(() => beep(1180, .09), 90); setTimeout(() => beep(1480, .12), 180);
+      pushLog('🎾', '追着逗猫棒跑了一阵', '心情 +18');
+      toast('玩得好开心，但精力掉了一点', 'info');
+    } else if (kind === 'sleep') {
+      s.sleeping = !s.sleeping;
+      if (s.sleeping) {
+        say(pick(LINES.sleep), 3200);
+        beep(420, .3, 'sine');
+        pushLog('💤', '蜷成一团睡着了', '回复精力中');
+        toast('喵酱进入睡眠模式，精力会慢慢回复', 'ok');
+      } else {
+        say('喵！本喵睡醒啦，精神满满~', 2600);
+        beep(980, .12);
+        pushLog('☀️', '伸了个懒腰醒来了', '睡眠结束');
+        toast('喵酱醒来了');
+      }
+    }
+    render();
+  }
+
+  $('#btnFeed').onclick = () => interact('feed');
+  $('#btnPet').onclick = () => interact('pet');
+  $('#btnPlay').onclick = () => interact('play');
+  $('#btnSleep').onclick = () => interact('sleep');
+
+  /* 清空互动记录：界面内二次确认 */
+  let armed = false, armTimer = null;
+  const clearBtn = $('#btnClear');
+  function disarm() { armed = false; clearBtn.textContent = '清空记录'; clearBtn.classList.remove('danger'); }
+  clearBtn.onclick = () => {
+    if (!log.length) { toast('记录本来就是空的喵~', 'warn'); return; }
+    if (!armed) {
+      armed = true;
+      clearBtn.textContent = '再点一次确认';
+      clearBtn.classList.add('danger');
+      toast('再点一次就会清空全部互动记录喵', 'warn');
+      if (armTimer) clearTimeout(armTimer);
+      armTimer = setTimeout(disarm, 4000);
+      return;
+    }
+    if (armTimer) clearTimeout(armTimer);
+    log = [];
+    store.set('pet-log', log);
+    disarm();
+    renderLog();
+    toast('互动记录已清空', 'warn');
+  };
+
+  /* ---------------- 随时间真实衰减（每 3 秒） ---------------- */
+  setInterval(() => {
+    if (s.sleeping) {
+      s.energy = clamp(s.energy + 2, 0, 100);
+      s.hunger = clamp(s.hunger - 1, 0, 100);
+      s.mood = clamp(s.mood + 0.4, 0, 100);
+    } else {
+      s.mood = clamp(s.mood - 1, 0, 100);
+      s.hunger = clamp(s.hunger - 1, 0, 100);
+      s.energy = clamp(s.energy - 1, 0, 100);
+    }
+
+    const low = Math.min(s.mood, s.hunger, s.energy);
+    if (low < 25 && !lowWarned) {
+      lowWarned = true;
+      const key = s.hunger === low ? 'lowHunger' : (s.energy === low ? 'lowEnergy' : 'lowMood');
+      say(pick(LINES[key]), 3600);
+      PL.notify('喵酱需要照顾', key === 'lowHunger' ? '饱食度偏低了喵' : (key === 'lowEnergy' ? '精力快见底了喵' : '心情有点低落喵'), { kind: 'warn' });
+      beep(320, .25, 'triangle');
+    } else if (low > 40) {
+      lowWarned = false;
+    }
+
+    renderStats();
+    save();
+  }, DECAY_MS);
+
+  /* 偶尔自言自语 + 底部时钟（每秒走动） */
+  setInterval(() => {
+    $('#foot').textContent = (s.sleeping ? '💤 睡眠中 · ' : '') + '本地时间 ' + fmtClock();
+    PL.compactRefreshAll();
+  }, 1000);
+
+  setInterval(() => {
+    if (!s.sleeping && Math.random() < .5) say(pick(LINES.idle), 2400);
+  }, 15000);
+
+  render();
+
+  /* ============================================================
+     桌面精简形态：猫咪图标 / 状态环 / 三项状态
+     ============================================================ */
+  const cwf = PL.cwf;
+
+  /** 猫咪表情：随状态与心情变化 */
+  function catEmoji() {
+    if (s.sleeping) return '😴';
+    if (s.hunger < 25) return '🙀';
+    if (s.mood < 30) return '😿';
+    if (s.mood >= 75 && s.hunger >= 60) return '😻';
+    return '🐱';
+  }
+  /** 等级：按互动次数 */
+  function level() { return Math.min(MAX_LV, 1 + Math.floor(s.acts / 5)); }
+
+  PL.compact({
+    id: 'pet-companion',
+    name: '桌面宠物',
+    icon: '🐱',
+    defFormat: 'icon',
+    defSize: 'square',
+    data: () => ({ s, level: level() }),
+    formats: [
+      {
+        id: 'icon',
+        name: '猫咪',
+        icon: '🐱',
+        options: [
+          { key: 'showLevel', type: 'bool', label: '显示等级', def: true },
+        ],
+        render: (o) => ({
+          cls: 'cw-icon',
+          html: '<span class="ic" style="background:var(--accent)22;color:var(--accent)">' + catEmoji() + '</span>' +
+                (o.showLevel === false ? '' : '<span class="nm">Lv.' + level() + (s.sleeping ? ' · 睡觉中' : '') + '</span>'),
+          // 点猫咪即摸摸它（涨心情），而不是打开完整窗口
+          onMount: (face) => {
+            face.style.cursor = 'pointer';
+            face.onclick = (e) => {
+              e.stopPropagation();
+              if (s.sleeping) { toast('本喵在睡觉喵…', 'info'); return; }
+              s.mood = clamp(s.mood + 4, 0, 100);
+              s.acts++;
+              save();
+              beep(880, .08);
+              toast('呼噜呼噜~ 心情 +4', 'ok');
+              if (typeof render === 'function') render();
+              PL.compactRefreshAll();
+            };
+          },
+        }),
+      },
+      {
+        id: 'ring',
+        name: '心情环',
+        icon: '⭕',
+        options: [
+          { key: 'which', type: 'select', label: '显示哪项', def: 'mood',
+            options: [
+              { value: 'mood', label: '心情' },
+              { value: 'hunger', label: '饱食度' },
+              { value: 'energy', label: '精力' },
+            ] },
+        ],
+        render: (o) => {
+          const k = o.which || 'mood';
+          const label = { mood: '心情', hunger: '饱食度', energy: '精力' }[k];
+          return cwf.ring({ pct: s[k], label });
+        },
+      },
+      {
+        id: 'stat',
+        name: '状态数值',
+        icon: '📊',
+        options: [
+          { key: 'which', type: 'select', label: '显示哪项', def: 'acts',
+            options: [
+              { value: 'acts', label: '互动次数' },
+              { value: 'mood', label: '心情' },
+              { value: 'hunger', label: '饱食度' },
+              { value: 'energy', label: '精力' },
+            ] },
+        ],
+        render: (o) => {
+          const k = o.which || 'acts';
+          const unit = k === 'acts' ? '次' : '%';
+          const label = { acts: '互动次数', mood: '心情', hunger: '饱食度', energy: '精力' }[k];
+          return cwf.stat({ value: Math.round(s[k] || 0), unit, name: label });
+        },
+      },
+    ],
+  });
+})();
+</script>
+</body>
+</html>

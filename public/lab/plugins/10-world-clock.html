@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>世界时钟 · 多城市时间</title>
+<link rel="stylesheet" href="../assets/theme.css">
+<link rel="stylesheet" href="../assets/compact.css">
+<style>
+  :root { --accent: #14b8a6; --accent-2: #2dd4bf; }
+  .local { text-align: center; padding: 6px 0 2px; }
+  .local .big { font-family: var(--mono); font-size: 44px; font-weight: 700; letter-spacing: -2px; line-height: 1; }
+  .local .date { font-size: 12px; color: var(--muted); margin-top: 5px; }
+  .city { display: flex; align-items: center; gap: 11px; }
+  .city .tm { font-family: var(--mono); font-size: 21px; font-weight: 700; letter-spacing: -0.5px; min-width: 74px; }
+  .city .nm { font-size: 12.5px; font-weight: 650; }
+  .city .df { font-size: 10.5px; color: var(--muted); }
+  .city .en { font-size: 26px; }
+  .city.night { background: linear-gradient(135deg, color-mix(in srgb, #1e293b 14%, var(--surface-2)), var(--surface-2)); }
+  .addrow { display: flex; gap: 7px; }
+  .addrow select { flex: 1; }
+</style>
+</head>
+<body>
+<div class="win" style="--w:400px">
+  <header class="win-head">
+    <div class="lights"><i></i><i></i><i></i></div>
+    <div class="win-title"><span class="ico">🌍</span>世界时钟<span class="win-sub">多城市时间</span></div>
+    <div class="spacer"></div>
+    <span class="badge" id="tz">UTC+8</span>
+  </header>
+
+  <div class="win-body">
+    <div class="card local">
+      <div class="small muted" id="localCity">本地时间 · 上海</div>
+      <div class="big" id="localTime">--:--:--</div>
+      <div class="date" id="localDate">—</div>
+    </div>
+
+    <div class="addrow">
+      <select id="citySel"></select>
+      <button class="btn primary" id="addCity">＋ 添加</button>
+    </div>
+
+    <div class="row between">
+      <span class="small bold">已添加城市</span>
+      <span class="tiny muted" id="cnt">0 个城市</span>
+    </div>
+    <div class="list scroll" id="list" style="--scroll-h:212px"></div>
+
+    <div class="card row between">
+      <div class="col" style="gap:2px">
+        <span class="small bold">24 小时格式</span>
+        <span class="tiny muted">关闭后显示 12 小时制（AM/PM）</span>
+      </div>
+      <label class="switch"><input type="checkbox" id="h24" checked><i></i></label>
+    </div>
+  </div>
+
+  <footer class="win-foot">
+    <span class="dot live"></span><span id="foot">每秒刷新 · 已同步系统时间</span>
+    <div class="spacer" style="flex:1"></div>
+    <span class="tiny" id="utc">UTC —</span>
+  </footer>
+</div>
+
+<script src="../assets/pl.js"></script>
+<script src="../assets/compact.js"></script>
+<script>
+(function () {
+  const { $, $$, toast, store, pad } = PL;
+
+  /* 城市库：offset 为相对 UTC 的小时偏移（含夏令时近似值） */
+  const CITIES = [
+    { n: '上海',   en: 'Shanghai',  off: 8,    ic: '🏙️' },
+    { n: '北京',   en: 'Beijing',   off: 8,    ic: '🏯' },
+    { n: '东京',   en: 'Tokyo',     off: 9,    ic: '🗼' },
+    { n: '首尔',   en: 'Seoul',     off: 9,    ic: '🎡' },
+    { n: '新加坡', en: 'Singapore', off: 8,    ic: '🦁' },
+    { n: '悉尼',   en: 'Sydney',    off: 10,   ic: '🌉' },
+    { n: '孟买',   en: 'Mumbai',    off: 5.5,  ic: '🛕' },
+    { n: '迪拜',   en: 'Dubai',     off: 4,    ic: '🕌' },
+    { n: '莫斯科', en: 'Moscow',    off: 3,    ic: '🏰' },
+    { n: '柏林',   en: 'Berlin',    off: 1,    ic: '🚪' },
+    { n: '巴黎',   en: 'Paris',     off: 1,    ic: '🗼' },
+    { n: '伦敦',   en: 'London',    off: 0,    ic: '🎡' },
+    { n: '纽约',   en: 'New York',  off: -5,   ic: '🗽' },
+    { n: '芝加哥', en: 'Chicago',   off: -6,   ic: '🌆' },
+    { n: '洛杉矶', en: 'Los Angeles', off: -8, ic: '🎬' },
+    { n: '圣保罗', en: 'São Paulo', off: -3,   ic: '⚽' },
+    { n: '开罗',   en: 'Cairo',     off: 2,    ic: '🐫' },
+    { n: '奥克兰', en: 'Auckland',  off: 12,   ic: '⛵' }
+  ];
+
+  let mine = store.get('clock-cities', ['东京', '伦敦', '纽约', '悉尼']);
+  let h24 = store.get('clock-h24', true);
+
+  /* 填充下拉 */
+  const sel = $('#citySel');
+  CITIES.forEach(c => {
+    const o = document.createElement('option');
+    o.value = c.n;
+    o.textContent = c.ic + ' ' + c.n + ' (' + c.en + ')  UTC' + (c.off >= 0 ? '+' : '') + c.off;
+    sel.appendChild(o);
+  });
+  $('#h24').checked = h24;
+
+  const localOff = -new Date().getTimezoneOffset() / 60;
+
+  function timeIn(off) {
+    const now = new Date();
+    const utc = now.getTime() + now.getTimezoneOffset() * 60000;
+    return new Date(utc + off * 3600000);
+  }
+  function fmtHM(d) {
+    let h = d.getHours();
+    if (h24) return pad(h) + ':' + pad(d.getMinutes());
+    const ap = h < 12 ? 'AM' : 'PM';
+    h = h % 12 || 12;
+    return pad(h) + ':' + pad(d.getMinutes()) + ' ' + ap;
+  }
+  function fmtFull(d) { return pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds()); }
+  function offsetTxt(off) {
+    const d = off - localOff;
+    if (Math.abs(d) < 0.01) return '与本地相同';
+    return (d > 0 ? '快 ' : '慢 ') + (Math.abs(d) % 1 ? Math.abs(d).toFixed(1) : Math.abs(d)) + ' 小时';
+  }
+  function dayLabel(d, off) {
+    const there = d.getDate(), here = timeIn(localOff).getDate();
+    if (there === here) return '今天';
+    return there > here ? '明天' : '昨天';
+  }
+
+  function render() {
+    const box = $('#list');
+    box.innerHTML = '';
+    if (!mine.length) box.innerHTML = '<div class="empty">还没有添加城市喵~ 从上面选一个吧</div>';
+
+    mine.forEach(n => {
+      const c = CITIES.find(x => x.n === n);
+      if (!c) return;
+      const d = timeIn(c.off);
+      const h = d.getHours();
+      const night = h < 6 || h >= 19;
+      const el = document.createElement('div');
+      el.className = 'item city' + (night ? ' night' : '');
+      el.innerHTML =
+        '<span class="en">' + (night ? '🌙' : '☀️') + '</span>' +
+        '<div class="grow"><div class="nm">' + c.ic + ' ' + c.n + ' <span class="tiny muted">' + c.en + '</span></div>' +
+        '<div class="df">' + offsetTxt(c.off) + ' · ' + dayLabel(d, c.off) + ' · ' + (night ? '夜间' : '白天') + '</div></div>' +
+        '<span class="tm">' + fmtHM(d) + '</span>' +
+        '<button class="btn sm danger" data-del="' + c.n + '" title="移除">✕</button>';
+      box.appendChild(el);
+    });
+
+    $('#cnt').textContent = mine.length + ' 个城市';
+    $('#tz').textContent = 'UTC' + (localOff >= 0 ? '+' : '') + localOff;
+    store.set('clock-cities', mine);
+  }
+
+  function tick() {
+    const now = new Date();
+    $('#localTime').textContent = fmtFull(now);
+    const wk = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'][now.getDay()];
+    $('#localDate').textContent = now.getFullYear() + ' 年 ' + (now.getMonth() + 1) + ' 月 ' + now.getDate() + ' 日 ' + wk;
+    $('#utc').textContent = 'UTC ' + now.toISOString().slice(11, 19);
+
+    /* 每秒更新城市时间（不重建 DOM，避免闪烁） */
+    const items = $$('#list .city');
+    items.forEach((el, k) => {
+      const c = CITIES.find(x => x.n === mine[k]);
+      if (!c) return;
+      const d = timeIn(c.off);
+      const tm = el.querySelector('.tm');
+      if (tm) tm.textContent = fmtHM(d);
+    });
+
+    // 精简组件跟随每秒刷新
+    PL.compactRefreshAll();
+  }
+
+  $('#addCity').onclick = () => {
+    const n = sel.value;
+    if (!n) { toast('请选择一个城市', 'warn'); return; }
+    if (mine.includes(n)) { toast(n + ' 已经在列表里啦', 'warn'); return; }
+    if (mine.length >= 8) { toast('最多同时显示 8 个城市喵~', 'warn'); return; }
+    mine.push(n);
+    const c = CITIES.find(x => x.n === n);
+    toast('已添加 ' + c.ic + ' ' + n + ' · ' + offsetTxt(c.off), 'ok');
+    render();
+  };
+
+  $('#list').onclick = e => {
+    const b = e.target.closest('[data-del]');
+    if (!b) return;
+    mine = mine.filter(x => x !== b.dataset.del);
+    toast('已移除 ' + b.dataset.del, 'warn');
+    render();
+  };
+
+  $('#h24').onchange = e => {
+    h24 = e.target.checked;
+    store.set('clock-h24', h24);
+    toast(h24 ? '已切换为 24 小时制' : '已切换为 12 小时制（AM/PM）', 'ok');
+    render();
+  };
+
+  setInterval(tick, 1000);
+  tick();
+  render();
+  toast('世界时钟已同步，共 ' + mine.length + ' 个城市 🌍');
+
+  /* ============================================================
+     桌面精简形态：主城市时间 / 多城市时刻表 / 时差
+     ============================================================ */
+  const cwf = PL.cwf;
+
+  /** 精简组件要展示的城市；返回 null 表示用本地时间 */
+  function cwPickCity(o) {
+    if (!o || o.which === 'local') return null;
+    const n = o.which === 'last' ? mine[mine.length - 1] : mine[0];
+    return CITIES.find(x => x.n === n) || null;
+  }
+
+  /** 城市名 + 今天/明天，做成一行小字 */
+  function cwCityLabel(c, d) {
+    return c ? c.ic + ' ' + c.n + ' · ' + dayLabel(d, c.off) : '本地时间';
+  }
+
+  PL.compact({
+    id: 'world-clock',
+    name: '世界时钟',
+    icon: '🌍',
+    defFormat: 'clock',
+    defSize: 'square',
+    data: () => ({ cities: mine, localOff: localOff, h24: h24 }),
+    formats: [
+      {
+        id: 'clock',
+        name: '主城市时间',
+        icon: '🕐',
+        options: [
+          { key: 'which', type: 'select', label: '显示哪个', def: 'local',
+            options: [
+              { value: 'local', label: '本地时间' },
+              { value: 'first', label: '第一个城市' },
+              { value: 'last', label: '最后添加的' },
+            ] },
+          { key: 'showSec', type: 'bool', label: '显示秒', def: true },
+        ],
+        render: (o) => {
+          const c = cwPickCity(o);
+          const d = c ? timeIn(c.off) : new Date();
+          return cwf.clock({
+            time: fmtHM(d),
+            sec: o.showSec === false ? false : pad(d.getSeconds()),
+            name: cwCityLabel(c, d),
+          });
+        },
+      },
+      {
+        id: 'list',
+        name: '多城市时刻表',
+        icon: '📋',
+        options: [
+          { key: 'max', type: 'num', label: '显示条数', def: 3, min: 2, max: 5 },
+          { key: 'showDay', type: 'bool', label: '显示今天/明天', def: true },
+        ],
+        render: (o) => {
+          const rows = mine.map(n => CITIES.find(x => x.n === n)).filter(Boolean).map(c => {
+            const d = timeIn(c.off);
+            const night = d.getHours() < 6 || d.getHours() >= 19;
+            return {
+              icon: night ? '🌙' : '☀️',
+              text: c.ic + ' ' + c.n + (o.showDay === false ? '' : ' · ' + dayLabel(d, c.off)),
+              right: fmtHM(d),
+            };
+          });
+          if (!rows.length) rows.push({ icon: '🌍', text: '还没有添加城市喵~', right: '—' });
+          return cwf.list({ rows, max: Number(o.max) || 3 });
+        },
+      },
+      {
+        id: 'stat',
+        name: '时差',
+        icon: '🔢',
+        options: [
+          { key: 'which', type: 'select', label: '对比城市', def: 'first',
+            options: [
+              { value: 'first', label: '第一个城市' },
+              { value: 'last', label: '最后添加的' },
+            ] },
+          { key: 'label', type: 'text', label: '标签文字', def: '时差' },
+        ],
+        render: (o) => {
+          const c = cwPickCity(o);
+          if (!c) return cwf.stat({ value: '—', unit: '', name: o.label || '时差' });
+          const diff = c.off - localOff;
+          const v = (diff > 0 ? '+' : '') + (Number.isInteger(diff) ? diff : diff.toFixed(1));
+          return cwf.stat({ value: v, unit: '小时', name: (o.label || '时差') + ' · ' + c.n });
+        },
+      },
+    ],
+  });
+})();
+</script>
+</body>
+</html>

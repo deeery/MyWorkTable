@@ -1,0 +1,213 @@
+{
+  "generatedAt": "2026-10-16",
+  "count": 23,
+  "plugins": [
+    {
+      "num": "01",
+      "file": "01-medication-reminder.html",
+      "title": "药品管家",
+      "emoji": "💊",
+      "accent": "#f97316",
+      "hasCompact": true,
+      "isOverlay": false
+    },
+    {
+      "num": "02",
+      "file": "02-water-reminder.html",
+      "title": "喝水提醒",
+      "emoji": "💧",
+      "accent": "#38bdf8",
+      "hasCompact": true,
+      "isOverlay": false
+    },
+    {
+      "num": "03",
+      "file": "03-pomodoro-focus.html",
+      "title": "番茄专注",
+      "emoji": "🍅",
+      "accent": "#ef4444",
+      "hasCompact": true,
+      "isOverlay": false
+    },
+    {
+      "num": "04",
+      "file": "04-sit-stand-reminder.html",
+      "title": "久坐管家",
+      "emoji": "🧘",
+      "accent": "#22c55e",
+      "hasCompact": true,
+      "isOverlay": false
+    },
+    {
+      "num": "06",
+      "file": "06-todo-list.html",
+      "title": "待办清单",
+      "emoji": "✅",
+      "accent": "#6366f1",
+      "hasCompact": true,
+      "isOverlay": false
+    },
+    {
+      "num": "07",
+      "file": "07-countdown-days.html",
+      "title": "倒数日",
+      "emoji": "📅",
+      "accent": "#8b5cf6",
+      "hasCompact": true,
+      "isOverlay": false
+    },
+    {
+      "num": "08",
+      "file": "08-app-launcher.html",
+      "title": "快捷启动器",
+      "emoji": "🚀",
+      "accent": "#0ea5e9",
+      "hasCompact": true,
+      "isOverlay": false
+    },
+    {
+      "num": "09",
+      "file": "09-music-player.html",
+      "title": "音乐播放器",
+      "emoji": "🎵",
+      "accent": "#a855f7",
+      "hasCompact": true,
+      "isOverlay": false
+    },
+    {
+      "num": "10",
+      "file": "10-world-clock.html",
+      "title": "世界时钟",
+      "emoji": "🌍",
+      "accent": "#14b8a6",
+      "hasCompact": true,
+      "isOverlay": false
+    },
+    {
+      "num": "12",
+      "file": "12-sticky-notes.html",
+      "title": "快速便签",
+      "emoji": "🗒️",
+      "accent": "#facc15",
+      "hasCompact": true,
+      "isOverlay": false
+    },
+    {
+      "num": "13",
+      "file": "13-weather-widget.html",
+      "title": "天气小部件",
+      "emoji": "⛅",
+      "accent": "#3b82f6",
+      "hasCompact": true,
+      "isOverlay": false
+    },
+    {
+      "num": "16",
+      "file": "16-parcel-tracker.html",
+      "title": "快递追踪",
+      "emoji": "📦",
+      "accent": "#f472b6",
+      "hasCompact": true,
+      "isOverlay": false
+    },
+    {
+      "num": "18",
+      "file": "18-screenshot-pin.html",
+      "title": "截图贴图",
+      "emoji": "✂️",
+      "accent": "#ef4444",
+      "hasCompact": true,
+      "isOverlay": false
+    },
+    {
+      "num": "19",
+      "file": "19-window-tiler.html",
+      "title": "窗口布局",
+      "emoji": "🪟",
+      "accent": "#8b5cf6",
+      "hasCompact": true,
+      "isOverlay": false
+    },
+    {
+      "num": "22",
+      "file": "22-stopwatch-timer.html",
+      "title": "计时秒表",
+      "emoji": "⏱️",
+      "accent": "#f97316",
+      "hasCompact": true,
+      "isOverlay": false
+    },
+    {
+      "num": "26",
+      "file": "26-habit-tracker.html",
+      "title": "习惯打卡",
+      "emoji": "🔥",
+      "accent": "#f43f5e",
+      "hasCompact": true,
+      "isOverlay": false
+    },
+    {
+      "num": "27",
+      "file": "27-breathing-relax.html",
+      "title": "呼吸放松",
+      "emoji": "🌬️",
+      "accent": "#14b8a6",
+      "hasCompact": true,
+      "isOverlay": false
+    },
+    {
+      "num": "29",
+      "file": "29-meeting-reminder.html",
+      "title": "会议提醒",
+      "emoji": "📆",
+      "accent": "#3b82f6",
+      "hasCompact": true,
+      "isOverlay": false
+    },
+    {
+      "num": "30",
+      "file": "30-do-not-disturb.html",
+      "title": "勿扰模式",
+      "emoji": "🌙",
+      "accent": "#7c3aed",
+      "hasCompact": true,
+      "isOverlay": false
+    },
+    {
+      "num": "42",
+      "file": "42-pet-companion.html",
+      "title": "桌面宠物",
+      "emoji": "🐱",
+      "accent": "#f472b6",
+      "hasCompact": true,
+      "isOverlay": false
+    },
+    {
+      "num": "46",
+      "file": "46-volume-mixer.html",
+      "title": "音量混合器",
+      "emoji": "🎚️",
+      "accent": "#8b5cf6",
+      "hasCompact": true,
+      "isOverlay": false
+    },
+    {
+      "num": "50",
+      "file": "50-brightness-temp.html",
+      "title": "亮度色温",
+      "emoji": "🔆",
+      "accent": "#f59e0b",
+      "hasCompact": true,
+      "isOverlay": false
+    },
+    {
+      "num": "51",
+      "file": "51-desk-pet.html",
+      "title": "喵酱桌宠",
+      "emoji": "🐱",
+      "accent": "#f472b6",
+      "hasCompact": false,
+      "isOverlay": true
+    }
+  ]
+}

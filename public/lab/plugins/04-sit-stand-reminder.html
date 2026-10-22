@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>久坐管家 · 站坐交替提醒</title>
+<link rel="stylesheet" href="../assets/theme.css">
+<link rel="stylesheet" href="../assets/compact.css">
+<style>
+  :root { --accent: #22c55e; --accent-2: #4ade80; }
+  .posture { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; }
+  .posture button {
+    font: inherit; cursor: pointer; border-radius: 13px; padding: 13px 8px; text-align: center;
+    border: 1px solid var(--border); background: var(--surface-2); color: var(--text);
+    transition: .22s; display: flex; flex-direction: column; align-items: center; gap: 4px;
+  }
+  .posture button .e { font-size: 24px; }
+  .posture button.on { border-color: transparent; background: linear-gradient(135deg, var(--accent), var(--accent-2)); color: var(--accent-ink); box-shadow: 0 10px 22px -12px var(--accent); }
+  .posture button.on .s { color: color-mix(in srgb, var(--accent-ink) 80%, transparent); }
+  .posture .s { font-size: 10.5px; color: var(--muted); }
+  .stretch { background: var(--surface-2); border: 1px solid var(--border); border-radius: 13px; padding: 12px; }
+  .stretch .big { font-size: 15px; font-weight: 700; }
+  .cd-big { font-family: var(--mono); font-size: 34px; font-weight: 700; letter-spacing: -1px; }
+  .alert-red { animation: redflash 1s ease-in-out infinite; }
+  @keyframes redflash { 50% { color: var(--danger); } }
+</style>
+</head>
+<body>
+<div class="win" style="--w:400px">
+  <header class="win-head">
+    <div class="lights"><i></i><i></i><i></i></div>
+    <div class="win-title"><span class="ico">🧘</span>久坐管家<span class="win-sub">站坐交替提醒</span></div>
+    <div class="spacer"></div>
+    <span class="badge" id="stateBadge">坐姿中</span>
+  </header>
+
+  <div class="win-body">
+    <div class="card row between">
+      <div class="col" style="gap:3px">
+        <span class="small muted" id="cdLabel">距离该站起来还有</span>
+        <span class="cd-big" id="cd">45:00</span>
+        <div class="bar thin" style="width:170px"><i id="bar"></i></div>
+      </div>
+      <div class="ring" id="ring" style="--size:92px;--thick:9px">
+        <div><b id="ringTxt">0%</b><span>本段进度</span></div>
+      </div>
+    </div>
+
+    <div class="posture">
+      <button id="btnSit" class="on"><span class="e">🪑</span><b>我在坐着</b><span class="s">已坐 <span id="sitMin">0</span> 分钟</span></button>
+      <button id="btnStand"><span class="e">🧍</span><b>我在站着</b><span class="s">已站 <span id="standMin">0</span> 分钟</span></button>
+    </div>
+
+    <div class="stretch">
+      <div class="row between">
+        <span class="small bold">拉伸提示</span>
+        <button class="btn sm" id="next">换一个 ↻</button>
+      </div>
+      <div class="row" style="margin-top:8px">
+        <div class="av" style="width:40px;height:40px;font-size:21px;border-radius:12px" id="stIcon">🙆</div>
+        <div class="grow">
+          <div class="big" id="stName">肩颈绕环</div>
+          <div class="tiny muted" id="stDesc">缓慢绕肩 10 次，前后各 5 次</div>
+        </div>
+        <span class="badge" id="stSec">30 秒</span>
+      </div>
+    </div>
+
+    <div class="card col" style="gap:10px">
+      <div class="row">
+        <span class="small muted" style="width:78px">久坐提醒</span>
+        <input type="range" id="rEvery" min="15" max="90" step="5" value="45" style="flex:1">
+        <span class="badge" id="vEvery">45 分</span>
+      </div>
+      <div class="row">
+        <span class="small muted" style="width:78px">今日目标</span>
+        <input type="range" id="rGoal" min="4" max="16" value="8" style="flex:1">
+        <span class="badge" id="vGoal">8 次</span>
+      </div>
+      <label class="inline"><input type="checkbox" id="sound" checked> 到点播放提示音并弹提醒</label>
+    </div>
+
+    <div class="stats">
+      <div class="card stat"><b id="s1">0</b><span>今日站立次数</span></div>
+      <div class="card stat"><b id="s2">0</b><span>站立总时长(分)</span></div>
+      <div class="card stat"><b id="s3">0</b><span>最长久坐(分)</span></div>
+    </div>
+  </div>
+
+  <footer class="win-foot">
+    <span class="dot live"></span><span id="foot">监测中 · 每 45 分钟提醒一次</span>
+    <div class="spacer" style="flex:1"></div>
+    <button class="btn sm primary" id="moveNow">我去活动了</button>
+  </footer>
+</div>
+
+<script src="../assets/pl.js"></script>
+<script src="../assets/compact.js"></script>
+<script>
+(function () {
+  const { $, toast, notify, beep, chime, store, pad, today, clamp, pick } = PL;
+
+  const STRETCH = [
+    { i: '🙆', n: '肩颈绕环', d: '缓慢绕肩 10 次，前后各 5 次', s: 30 },
+    { i: '🧍', n: '靠墙站立', d: '后脑勺、肩胛、臀部贴墙，保持均匀呼吸', s: 60 },
+    { i: '🦵', n: '小腿拉伸', d: '双手扶墙，后腿伸直下压，左右各 20 秒', s: 40 },
+    { i: '🔄', n: '转体伸展', d: '坐姿左右转体，每侧停留 5 秒共 10 次', s: 50 },
+    { i: '👐', n: '手腕放松', d: '十指交叉反转上推，配合手腕绕环', s: 25 },
+    { i: '👀', n: '远眺放松', d: '看向 6 米外固定点，让睫状肌休息', s: 20 },
+    { i: '🦶', n: '踮脚提踵', d: '扶桌踮脚 15 次，促进下肢血液循环', s: 30 },
+    { i: '💪', n: '扩胸运动', d: '双臂后展扩胸，打开胸腔深呼吸 8 次', s: 30 }
+  ];
+
+  let every = store.get('sit-every', 45);          // 提醒间隔（分钟）
+  let goal = store.get('sit-goal', 8);
+  let posture = 'sit';
+  let left = every * 60;
+  let sitSec = 0, standSec = 0, standCount = store.get('sit-count-' + today(), 0);
+  let standTotal = store.get('sit-total-' + today(), 0);
+  let maxSit = store.get('sit-max-' + today(), 0);
+  let stIdx = 0, alerted = false;
+
+  $('#rEvery').value = every; $('#vEvery').textContent = every + ' 分';
+  $('#rGoal').value = goal;  $('#vGoal').textContent = goal + ' 次';
+
+  function setStretch(i) {
+    stIdx = (i + STRETCH.length) % STRETCH.length;
+    const s = STRETCH[stIdx];
+    $('#stIcon').textContent = s.i; $('#stName').textContent = s.n;
+    $('#stDesc').textContent = s.d; $('#stSec').textContent = s.s + ' 秒';
+  }
+  setStretch(0);
+
+  function render() {
+    const total = every * 60;
+    const pct = clamp((1 - left / total) * 100, 0, 100);
+    const s = Math.max(0, Math.floor(left));
+    $('#cd').textContent = pad(Math.floor(s / 60)) + ':' + pad(s % 60);
+    $('#ring').style.setProperty('--p', pct);
+    $('#ringTxt').textContent = Math.round(pct) + '%';
+    $('#bar').style.width = pct + '%';
+    $('#sitMin').textContent = Math.floor(sitSec / 60);
+    $('#standMin').textContent = Math.floor(standSec / 60);
+    $('#s1').textContent = standCount;
+    $('#s2').textContent = standTotal + Math.floor(standSec / 60);
+    $('#s3').textContent = Math.floor(maxSit / 60);
+    $('#btnSit').classList.toggle('on', posture === 'sit');
+    $('#btnStand').classList.toggle('on', posture === 'stand');
+    $('#stateBadge').textContent = posture === 'sit' ? '坐姿中' : '站立中';
+    $('#stateBadge').className = 'badge' + (posture === 'stand' ? ' ok' : '');
+    $('#cdLabel').textContent = posture === 'sit' ? '距离该站起来还有' : '距离可以坐下还有';
+    $('#cd').classList.toggle('alert-red', posture === 'sit' && left < 300);
+  }
+
+  function switchTo(p) {
+    if (posture === 'sit') {
+      maxSit = Math.max(maxSit, sitSec);
+      standCount++;
+      standTotal += Math.floor(standSec / 60);
+      store.set('sit-count-' + today(), standCount);
+      store.set('sit-max-' + today(), Math.round(maxSit));
+    }
+    posture = p;
+    if (p === 'stand') { standSec = 0; toast('已切换到站立，记得活动一下喵~', 'ok'); beep(880, .1); }
+    else { sitSec = 0; toast('已切换回坐姿，保持腰背挺直', 'ok'); beep(560, .1); }
+    left = every * 60; alerted = false;
+    store.set('sit-total-' + today(), standTotal);
+    render();
+  }
+
+  $('#btnSit').onclick = () => posture !== 'sit' && switchTo('sit');
+  $('#btnStand').onclick = () => posture !== 'stand' && switchTo('stand');
+  $('#next').onclick = () => { setStretch(stIdx + 1); toast('换了个拉伸动作：' + STRETCH[stIdx].n); };
+  $('#moveNow').onclick = () => { left = every * 60; alerted = false; if (posture === 'sit') switchTo('stand'); else { toast('活动记录已重置计时', 'ok'); render(); } };
+
+  $('#rEvery').oninput = e => { every = +e.target.value; $('#vEvery').textContent = every + ' 分'; left = every * 60; alerted = false; render(); };
+  $('#rGoal').oninput = e => { goal = +e.target.value; $('#vGoal').textContent = goal + ' 次'; store.set('sit-goal', goal); };
+  $('#sound').onchange = e => toast(e.target.checked ? '提示音已开启' : '提示音已静音', e.target.checked ? 'ok' : 'warn');
+
+  setInterval(() => {
+    if (posture === 'sit') sitSec++; else standSec++;
+    left--;
+    if (left === 300 && posture === 'sit' && !alerted) {
+      alerted = true;
+      toast('还有 5 分钟就坐满 ' + every + ' 分钟啦，准备站起来吧', 'warn', 4000);
+    }
+    if (left <= 0) {
+      left = every * 60; alerted = false;
+      if ($('#sound').checked) chime();
+      if (posture === 'sit') {
+        notify('🧘 该站起来活动啦', '已经连续坐了 ' + every + ' 分钟');
+        toast(pick(['站起来走两步，让血液循环一下 🚶', '久坐伤腰，起来接杯水吧', '拉伸一下：' + STRETCH[stIdx].n]), 'warn', 4200);
+      } else {
+        notify('🪑 可以坐下继续了', '站立 ' + every + ' 分钟，做得很好');
+        toast('站立时间到，可以坐下啦', 'ok');
+      }
+    }
+    $('#foot').textContent = '监测中 · 本段剩余 ' + pad(Math.floor(Math.max(0, left) / 60)) + ':' + pad(Math.max(0, left) % 60) +
+      (standCount >= goal ? ' · 今日目标已达成 🎉' : '');
+    render();
+    // 计时与姿态随时在变，顺带刷新精简组件
+    PL.compactRefreshAll();
+  }, 1000);
+
+  render();
+
+  /* ============================================================
+     桌面精简形态：本轮进度环 / 时长统计 / 今日站立目标
+     ============================================================ */
+  const cwf = PL.cwf;
+
+  /** 当前姿态的中文名 */
+  function postureName(p) { return p === 'sit' ? '坐姿' : '站立'; }
+
+  PL.compact({
+    id: 'sit-stand-reminder',
+    name: '久坐管家',
+    icon: '🧘',
+    defFormat: 'ring',
+    defSize: 'square',
+    data: () => ({ posture, left, every, goal, sitSec, standSec, standCount, standTotal }),
+    formats: [
+      {
+        id: 'ring',
+        name: '本轮进度',
+        icon: '⭕',
+        options: [
+          { key: 'mode', type: 'select', label: '显示方式', def: 'elapsed',
+            options: [
+              { value: 'elapsed', label: '已过百分比' },
+              { value: 'left', label: '剩余百分比' },
+            ] },
+          { key: 'label', type: 'select', label: '环下文字', def: 'posture',
+            options: [
+              { value: 'posture', label: '当前姿态' },
+              { value: 'countdown', label: '剩余时间' },
+              { value: 'none', label: '不显示' },
+            ] },
+        ],
+        render: (o, d) => {
+          const total = Math.max(1, d.every * 60);
+          const elapsed = clamp((1 - d.left / total) * 100, 0, 100);
+          const s = Math.max(0, Math.floor(d.left));
+          const label = o.label === 'none' ? false
+            : o.label === 'countdown' ? '剩 ' + pad(Math.floor(s / 60)) + ':' + pad(s % 60)
+            : postureName(d.posture) + '中';
+          return cwf.ring({ pct: o.mode === 'left' ? 100 - elapsed : elapsed, label });
+        },
+      },
+      {
+        id: 'stat',
+        name: '时长统计',
+        icon: '🔢',
+        options: [
+          { key: 'which', type: 'select', label: '显示哪个', def: 'sit',
+            options: [
+              { value: 'sit', label: '已坐分钟' },
+              { value: 'stand', label: '已站分钟' },
+              { value: 'count', label: '今日站立次数' },
+            ] },
+          { key: 'showUnit', type: 'bool', label: '显示单位', def: true },
+        ],
+        render: (o, d) => {
+          const which = o.which || 'sit';
+          const v = which === 'stand' ? Math.floor(d.standSec / 60)
+            : which === 'count' ? d.standCount
+            : Math.floor(d.sitSec / 60);
+          const u = which === 'count' ? '次' : '分';
+          const nm = which === 'stand' ? '已站时长' : which === 'count' ? '今日站立次数' : '已坐时长';
+          return cwf.stat({ value: v, unit: o.showUnit === false ? '' : u, name: nm });
+        },
+      },
+      {
+        id: 'bar',
+        name: '站立目标',
+        icon: '📊',
+        options: [
+          { key: 'showName', type: 'bool', label: '显示名称', def: true },
+          { key: 'sub', type: 'select', label: '副标题', def: 'goal',
+            options: [
+              { value: 'goal', label: '目标次数' },
+              { value: 'time', label: '站立累计时长' },
+              { value: 'none', label: '不显示' },
+            ] },
+        ],
+        render: (o, d) => {
+          const sub = o.sub === 'none' ? ''
+            : o.sub === 'time' ? '站立累计 ' + (d.standTotal + Math.floor(d.standSec / 60)) + ' 分钟'
+            : '目标 ' + d.goal + ' 次';
+          return cwf.bar({
+            name: o.showName === false ? '' : '今日站立目标',
+            value: d.standCount,
+            unit: '次',
+            pct: clamp(d.standCount / Math.max(1, d.goal) * 100, 0, 100),
+            sub,
+          });
+        },
+      },
+    ],
+  });
+})();
+</script>
+</body>
+</html>

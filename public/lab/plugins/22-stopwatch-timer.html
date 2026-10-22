@@ -1,0 +1,450 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>计时秒表 · 秒表与倒计时</title>
+<link rel="stylesheet" href="../assets/theme.css">
+<link rel="stylesheet" href="../assets/compact.css">
+<style>
+  :root { --accent: #f97316; --accent-2: #fb923c; }
+  .big-time { font-size: 40px; font-weight: 700; letter-spacing: -1.5px; font-variant-numeric: tabular-nums; }
+  .blink { animation: blink .55s ease-in-out 8; }
+  @keyframes blink { 50% { opacity: .22; } }
+  .lap-fast { border-color: color-mix(in srgb, var(--ok) 45%, transparent) !important; }
+  .lap-slow { border-color: color-mix(in srgb, var(--danger) 45%, transparent) !important; }
+  .lap .mono { font-variant-numeric: tabular-nums; }
+  #tmTime { font-variant-numeric: tabular-nums; }
+</style>
+</head>
+<body>
+<div class="win" style="--w:400px">
+  <header class="win-head">
+    <div class="lights"><i></i><i></i><i></i></div>
+    <div class="win-title"><span class="ico">⏱️</span>计时秒表<span class="win-sub">秒表与倒计时</span></div>
+    <div class="spacer"></div>
+    <span class="badge" id="clock">--:--:--</span>
+  </header>
+
+  <div class="win-body">
+    <div class="tabs" id="tabs">
+      <button class="active" data-pane="sw">秒表</button>
+      <button data-pane="tm">倒计时</button>
+    </div>
+
+    <!-- ========== 秒表 ========== -->
+    <div class="col" id="pane-sw">
+      <div class="card col center" style="gap:4px">
+        <div class="big-time mono" id="swTime">00:00.00</div>
+        <div class="tiny muted" id="swHint">毫秒级计时 · 空格键开始/暂停，L 键计次</div>
+      </div>
+      <div class="btns">
+        <button class="btn primary grow" id="swStart">▶ 开始</button>
+        <button class="btn grow" id="swLap">🏁 计次</button>
+        <button class="btn" id="swReset">↺ 复位</button>
+      </div>
+      <div class="row between">
+        <span class="small bold">计次记录</span>
+        <span class="tiny muted" id="lapStat">共 0 次</span>
+      </div>
+      <div class="list scroll" id="laps" style="--scroll-h:152px"></div>
+    </div>
+
+    <!-- ========== 倒计时 ========== -->
+    <div class="col hidden" id="pane-tm">
+      <div class="card row between">
+        <div class="ring" id="ring" style="--size:116px;--thick:10px">
+          <div><b id="tmTime" class="mono" style="font-size:19px">05:00</b><span id="tmState">准备就绪</span></div>
+        </div>
+        <div class="col grow" style="gap:8px">
+          <label class="field"><span>分钟</span><input type="number" id="tmMin" min="0" max="99" value="5"></label>
+          <label class="field"><span>秒</span><input type="number" id="tmSec" min="0" max="59" value="0"></label>
+        </div>
+      </div>
+      <div class="chips" id="presets">
+        <span class="chip" data-min="1">1 分钟</span>
+        <span class="chip" data-min="3">3 分钟</span>
+        <span class="chip on" data-min="5">5 分钟</span>
+        <span class="chip" data-min="10">10 分钟</span>
+        <span class="chip" data-min="25">25 分钟</span>
+      </div>
+      <div class="btns">
+        <button class="btn primary grow" id="tmStart">▶ 开始倒计时</button>
+        <button class="btn" id="tmReset">↺ 重置</button>
+      </div>
+    </div>
+  </div>
+
+  <footer class="win-foot">
+    <span class="dot live"></span><span id="foot">秒表就绪</span>
+    <div class="spacer" style="flex:1"></div>
+    <span class="tiny" id="todayCnt">今日完成 0 次</span>
+  </footer>
+</div>
+
+<script src="../assets/pl.js"></script>
+<script src="../assets/compact.js"></script>
+<script>
+(function () {
+  const { $, $$, toast, notify, beep, chime, store, pad, clamp, fmtTime, today } = PL;
+  const now = () => Date.now();
+
+  /* mm:ss.cs —— 百分秒两位 */
+  function fmtMs(ms) {
+    ms = Math.max(0, ms);
+    const m = Math.floor(ms / 60000);
+    const s = Math.floor(ms % 60000 / 1000);
+    const cs = Math.floor(ms % 1000 / 10);
+    return pad(m) + ':' + pad(s) + '.' + pad(cs);
+  }
+
+  /* ================= 秒表 ================= */
+  let laps = store.get('sw-laps', []);                       // [{ total, split }]
+  let elapsed = laps.length ? laps[laps.length - 1].total : 0;
+  let running = false;
+  let startedAt = 0;
+  let touched = elapsed > 0;                                 // 是否已经开始过（用于区分「开始」与「继续」）
+  const current = () => elapsed + (running ? now() - startedAt : 0);
+
+  function renderLaps() {
+    const box = $('#laps');
+    box.innerHTML = '';
+    if (!laps.length) {
+      box.innerHTML = '<div class="empty">还没有计次记录喵~ 计时中点「计次」试试</div>';
+      $('#lapStat').textContent = '共 0 次';
+      return;
+    }
+    // 最快 / 最慢：至少 3 次计次时，跳过第 1 段（起步段不参与比较）
+    let fast = -1, slow = -1;
+    const from = laps.length >= 3 ? 1 : 0;
+    if (laps.length >= 2) {
+      for (let i = from; i < laps.length; i++) {
+        if (fast < 0 || laps[i].split < laps[fast].split) fast = i;
+        if (slow < 0 || laps[i].split > laps[slow].split) slow = i;
+      }
+    }
+    laps.forEach((l, i) => {
+      const isFast = i === fast, isSlow = i === slow;
+      const el = document.createElement('div');
+      el.className = 'item lap' + (isFast ? ' lap-fast' : isSlow ? ' lap-slow' : '');
+      el.innerHTML =
+        '<div class="av">' + pad(i + 1) + '</div>' +
+        '<div class="grow">' +
+          '<div class="t mono">' + fmtMs(l.split) + '</div>' +
+          '<div class="s mono">总时间 ' + fmtMs(l.total) + '</div>' +
+        '</div>' +
+        (isFast ? '<span class="badge ok">最快</span>' : '') +
+        (isSlow ? '<span class="badge danger">最慢</span>' : '');
+      box.appendChild(el);
+    });
+    $('#lapStat').textContent = '共 ' + laps.length + ' 次';
+  }
+
+  function swRender() {
+    $('#swTime').textContent = fmtMs(current());
+    $('#swStart').textContent = running ? '⏸ 暂停' : (touched ? '▶ 继续' : '▶ 开始');
+    if (running) $('#foot').textContent = '秒表计时中 · ' + fmtMs(current());
+  }
+
+  function swToggle() {
+    if (running) {
+      elapsed = current();
+      running = false;
+      touched = true;
+      toast('已暂停在 ' + fmtMs(elapsed), 'info');
+    } else {
+      running = true;
+      touched = true;
+      startedAt = now();
+      toast('秒表开始计时喵~', 'ok');
+      beep(660, .09);
+    }
+    swRender();
+  }
+
+  $('#swStart').onclick = swToggle;
+
+  $('#swLap').onclick = () => {
+    if (!running && !current()) { toast('先开始计时再计次喵~', 'warn'); return; }
+    const total = current();
+    const prev = laps.length ? laps[laps.length - 1].total : 0;
+    laps.push({ total: total, split: total - prev });
+    store.set('sw-laps', laps);
+    renderLaps();
+    beep(780, .07);
+    toast('第 ' + laps.length + ' 次计次 · 分段 ' + fmtMs(total - prev), 'ok');
+  };
+
+  /* 复位：有记录时需界面内二次确认 */
+  let resetArmed = false, resetTimer = 0;
+  $('#swReset').onclick = () => {
+    if (!laps.length && !running && !current()) { toast('秒表已经是归零状态喵~', 'info'); return; }
+    if (!resetArmed && laps.length) {
+      resetArmed = true;
+      $('#swReset').textContent = '再点一次清空';
+      $('#swReset').classList.add('pulse');
+      resetTimer = setTimeout(() => {
+        resetArmed = false;
+        $('#swReset').textContent = '↺ 复位';
+        $('#swReset').classList.remove('pulse');
+      }, 2600);
+      toast('复位会清空 ' + laps.length + ' 条计次记录，再点一次确认', 'warn', 3000);
+      return;
+    }
+    clearTimeout(resetTimer);
+    resetArmed = false;
+    $('#swReset').textContent = '↺ 复位';
+    $('#swReset').classList.remove('pulse');
+    running = false; elapsed = 0; touched = false; laps = [];
+    store.set('sw-laps', laps);
+    renderLaps(); swRender();
+    toast('秒表已复位', 'info');
+  };
+
+  /* ================= 倒计时 ================= */
+  /* 内部一律用「毫秒」作为单位：total / left / endAt 都是 ms */
+  const set = store.get('tm-set', { min: 5, sec: 0 });
+  let tm = { running: false, left: 0, total: 0, endAt: 0 };
+  let doneCount = store.get('tm-done-' + today(), 0);
+
+  /** 读取输入框 → 毫秒 */
+  const inputTotal = () => clamp((+$('#tmMin').value || 0) * 60 + (+$('#tmSec').value || 0), 0, 99 * 60 + 59) * 1000;
+  const secsOf = ms => Math.round(ms / 1000);
+
+  function renderTm() {
+    const left = Math.max(0, tm.left);
+    const total = tm.total || 1;
+    const pct = clamp(Math.round((1 - left / total) * 100), 0, 100);
+    $('#ring').style.setProperty('--p', pct);
+    $('#tmTime').textContent = fmtTime(Math.ceil(left / 1000));
+    $('#tmState').textContent = tm.running ? '倒计时中' : (left > 0 && left < tm.total ? '已暂停' : '准备就绪');
+    $('#tmStart').textContent = tm.running ? '⏸ 暂停' : (left > 0 && left < tm.total ? '▶ 继续' : '▶ 开始倒计时');
+    if (tm.running) $('#foot').textContent = '倒计时剩余 ' + fmtTime(Math.ceil(left / 1000));
+    $('#todayCnt').textContent = '今日完成 ' + doneCount + ' 次';
+  }
+
+  /** 把倒计时恢复为输入框设定的时长（毫秒） */
+  function armTm() {
+    tm.running = false;
+    tm.total = inputTotal();
+    tm.left = tm.total;
+  }
+
+  $('#tmStart').onclick = () => {
+    if (tm.running) {                       // 暂停
+      tm.left = Math.max(0, tm.endAt - now());
+      tm.running = false;
+      renderTm();
+      toast('倒计时已暂停', 'info');
+      return;
+    }
+    // 未开始 / 已走完 时，重新读取输入框时长
+    if (!tm.left || tm.left >= tm.total) { tm.total = inputTotal(); tm.left = tm.total; }
+    if (!tm.left) { toast('先设定一个大于 0 的时长喵~', 'warn'); return; }
+    tm.running = true;
+    tm.endAt = now() + tm.left;
+    renderTm();
+    beep(660, .09);
+    toast('倒计时开始：' + fmtTime(secsOf(tm.left)), 'ok');
+  };
+
+  $('#tmReset').onclick = () => {
+    armTm();
+    $('#ring').classList.remove('blink');
+    renderTm();
+    toast('倒计时已重置为 ' + fmtTime(secsOf(tm.total)), 'info');
+  };
+
+  function tmFinish() {
+    const finished = secsOf(tm.total);
+    tm.running = false;
+    tm.left = 0;
+    chime();
+    setTimeout(() => chime(), 520);
+    notify('⏰ 时间到啦！', fmtTime(finished) + ' 的倒计时结束');
+    toast('⏰ 倒计时结束：' + fmtTime(finished) + ' 已完成', 'danger', 5000);
+    $('#ring').classList.add('blink');
+    setTimeout(() => $('#ring').classList.remove('blink'), 4600);
+    doneCount++;
+    store.set('tm-done-' + today(), doneCount);
+    armTm();
+    renderTm();
+  }
+
+  /* 时长输入：同步存储 + 圆环预览 */
+  function syncInputs() {
+    store.set('tm-set', { min: +$('#tmMin').value || 0, sec: +$('#tmSec').value || 0 });
+    if (!tm.running) { armTm(); renderTm(); }
+    $$('#presets .chip').forEach(c => c.classList.toggle('on', +c.dataset.min === (+$('#tmMin').value || 0) && (+$('#tmSec').value || 0) === 0));
+  }
+  $('#tmMin').oninput = syncInputs;
+  $('#tmSec').oninput = syncInputs;
+
+  $$('#presets .chip').forEach(c => c.onclick = () => {
+    $('#tmMin').value = c.dataset.min;
+    $('#tmSec').value = 0;
+    syncInputs();
+    toast('已设为 ' + c.textContent + '，点开始即可', 'info');
+  });
+
+  /* ================= 标签页 ================= */
+  $$('#tabs button').forEach(b => b.onclick = () => {
+    $$('#tabs button').forEach(x => x.classList.toggle('active', x === b));
+    const sw = b.dataset.pane === 'sw';
+    $('#pane-sw').classList.toggle('hidden', !sw);
+    $('#pane-tm').classList.toggle('hidden', sw);
+    $('#foot').textContent = sw ? '秒表就绪' : '倒计时待命';
+    beep(520, .05);
+  });
+
+  /* ================= 键盘快捷键（按当前标签页分发） ================= */
+  const onSwTab = () => !$('#pane-sw').classList.contains('hidden');
+  document.addEventListener('keydown', e => {
+    const tag = (e.target && e.target.tagName || '').toLowerCase();
+    if (tag === 'input' || tag === 'select' || tag === 'textarea') return;
+    if (e.code === 'Space') { e.preventDefault(); onSwTab() ? swToggle() : $('#tmStart').click(); }
+    else if (onSwTab() && (e.key === 'l' || e.key === 'L')) $('#swLap').click();
+    else if (onSwTab() && (e.key === 'r' || e.key === 'R')) $('#swReset').click();
+  });
+
+  /* ================= 10ms 主循环 ================= */
+  /* 精简组件刷新节流时间戳：10ms 主循环太密，约 100ms 重绘一次就够顺滑了 */
+  let cwPaintedAt = 0;
+
+  setInterval(() => {
+    const d = new Date();
+    $('#clock').textContent = pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
+
+    if (running) {
+      $('#swTime').textContent = fmtMs(current());
+      $('#foot').textContent = '秒表计时中 · ' + fmtMs(current());
+    }
+    if (tm.running) {
+      tm.left = tm.endAt - now();
+      if (tm.left <= 0) { tmFinish(); }
+      else renderTm();
+    }
+
+    /* 精简组件：主循环只有 10ms，节流到约每 150ms 刷新一次即可 */
+    if (now() - cwPaintedAt > 150) { cwPaintedAt = now(); PL.compactRefreshAll(); }
+  }, 10);
+
+  /* ================= 初始化 ================= */
+  $('#tmMin').value = set.min;
+  $('#tmSec').value = set.sec;
+  armTm();
+  renderLaps();
+  swRender();
+  renderTm();
+
+  /* ============================================================
+     桌面精简形态：秒表/倒计时读数 / 计次 / 倒计时进度
+     ============================================================ */
+  const cwf = PL.cwf;
+
+  /** 当前该展示哪一路计时：auto 表示「谁在跑就显示谁」 */
+  function cwMode(o) {
+    if (o && o.mode && o.mode !== 'auto') return o.mode;
+    if (tm.running) return 'timer';
+    if (running) return 'stopwatch';
+    return tm.left > 0 ? 'timer' : 'stopwatch';
+  }
+
+  PL.compact({
+    id: 'stopwatch-timer',
+    name: '计时秒表',
+    icon: '⏱️',
+    defFormat: 'clock',
+    defSize: 'square',
+    data: () => ({ laps: laps, running: running, touched: touched, doneCount: doneCount }),
+    formats: [
+      {
+        id: 'clock',
+        name: '计时读数',
+        icon: '⏱️',
+        options: [
+          { key: 'mode', type: 'select', label: '显示哪个', def: 'auto',
+            options: [
+              { value: 'auto', label: '自动（在跑的）' },
+              { value: 'stopwatch', label: '秒表' },
+              { value: 'timer', label: '倒计时' },
+            ] },
+          { key: 'showMs', type: 'bool', label: '秒表显示百分秒', def: true },
+        ],
+        render: (o) => {
+          if (cwMode(o) === 'timer') {
+            const left = Math.max(0, tm.left);
+            return cwf.clock({
+              time: fmtTime(Math.ceil(left / 1000)),
+              sec: tm.running ? '倒计时中' : (left > 0 && left < tm.total ? '已暂停' : '准备就绪'),
+              name: '共 ' + fmtTime(secsOf(tm.total || inputTotal())),
+            });
+          }
+          const ms = fmtMs(current());
+          return cwf.clock({
+            time: o.showMs === false ? ms.slice(0, 5) : ms,
+            sec: running ? '计时中' : (touched ? '已暂停' : '已复位'),
+            name: laps.length ? '第 ' + laps.length + ' 次计次' : '秒表',
+          });
+        },
+      },
+      {
+        id: 'stat',
+        name: '计次次数',
+        icon: '🏁',
+        options: [
+          { key: 'metric', type: 'select', label: '统计什么', def: 'laps',
+            options: [
+              { value: 'laps', label: '计次次数' },
+              { value: 'today', label: '今日完成倒计时' },
+            ] },
+          { key: 'label', type: 'text', label: '标签文字', def: '' },
+        ],
+        render: (o) => {
+          if (o.metric === 'today') {
+            return cwf.stat({ value: doneCount, unit: '次', name: o.label || '今日完成' });
+          }
+          return cwf.stat({ value: laps.length, unit: '次', name: o.label || '计次记录' });
+        },
+      },
+      {
+        id: 'bar',
+        name: '倒计时进度',
+        icon: '📊',
+        options: [
+          { key: 'source', type: 'select', label: '进度来源', def: 'timer',
+            options: [
+              { value: 'timer', label: '倒计时剩余' },
+              { value: 'stopwatch', label: '秒表已走' },
+            ] },
+          { key: 'goal', type: 'num', label: '秒表目标(分钟)', def: 5, min: 1, max: 120 },
+        ],
+        render: (o) => {
+          if (o.source === 'stopwatch') {
+            const goal = (Number(o.goal) || 5) * 60000;
+            const cur = current();
+            return cwf.bar({
+              name: '秒表',
+              value: fmtMs(cur),
+              unit: '',
+              pct: clamp(cur / goal * 100, 0, 100),
+              sub: '目标 ' + (Number(o.goal) || 5) + ' 分钟',
+            });
+          }
+          const total = tm.total || 1;
+          const left = Math.max(0, tm.left);
+          return cwf.bar({
+            name: '倒计时',
+            value: fmtTime(Math.ceil(left / 1000)),
+            unit: '',
+            pct: clamp((1 - left / total) * 100, 0, 100),
+            sub: '共 ' + fmtTime(secsOf(tm.total || inputTotal())),
+          });
+        },
+      },
+    ],
+  });
+})();
+</script>
+</body>
+</html>

@@ -4,3 +4,15 @@ dist
 *.local
 .vite
 *.log
+
+# 桌面壳（Electron）验收截图输出
+desktop/shots
+# 打包产物
+release
+
+# 界面验证截图（跑 desktop/shot-*.cjs 可随时重生成，不入库）
+shots/
+# TypeScript 增量构建缓存
+tsconfig.tsbuildinfo
+# 备份副本（如 weather/cities.json.bak）
+*.bak

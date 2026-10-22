@@ -1,0 +1,774 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>快速便签 · 随手记录</title>
+<link rel="stylesheet" href="../assets/theme.css">
+<link rel="stylesheet" href="../assets/compact.css">
+<style>
+  :root { --accent: #facc15; --accent-2: #fde047; }
+  .note-tabs { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 2px; }
+  .note-tab {
+    flex: none; font: inherit; font-size: 11.5px; font-weight: 600; cursor: grab;
+    padding: 6px 11px; border-radius: 9px; border: 1px solid var(--border);
+    background: var(--surface-2); color: var(--muted);
+    display: inline-flex; align-items: center; gap: 6px; transition: all .18s;
+  }
+  .note-tab .sw { width: 9px; height: 9px; border-radius: 3px; }
+  .note-tab.active { color: var(--text); border-color: color-mix(in srgb, var(--accent) 55%, transparent); box-shadow: 0 0 0 3px var(--accent-soft); }
+  .note-tab:hover { transform: translateY(-1px); }
+
+  /* ---------- 拖动便签标题的视觉反馈 ---------- */
+  /* 被拖的那张淡下去，插入位置用一根竖条标出来 */
+  .note-tab.dragging { opacity: .35; cursor: grabbing; }
+  .note-gap {
+    flex: none; width: 3px; align-self: stretch; border-radius: 2px;
+    background: var(--accent); box-shadow: 0 0 8px var(--accent);
+  }
+  /* 拖出卡片外：整条标签栏描虚线边，提示「松手会变成独立窗口」 */
+  .note-tabs.out {
+    outline: 1px dashed color-mix(in srgb, var(--accent) 75%, transparent);
+    outline-offset: 3px; border-radius: 11px;
+  }
+  body.note-dragging, body.note-dragging * { cursor: grabbing !important; }
+
+  #editor {
+    width: 100%; min-height: 168px; resize: vertical; line-height: 1.6; font-size: 13px;
+    background: var(--note-bg, var(--surface-2)); transition: background .25s;
+  }
+  .swatches { display: flex; gap: 7px; }
+  .swatch-btn {
+    width: 24px; height: 24px; border-radius: 8px; cursor: pointer; padding: 0;
+    border: 2px solid transparent; box-shadow: 0 1px 4px rgba(0,0,0,.14); transition: transform .16s, border-color .16s;
+  }
+  .swatch-btn:hover { transform: scale(1.12); }
+  .swatch-btn.on { border-color: var(--text); transform: scale(1.12); }
+  .save-hint { transition: opacity .3s; }
+</style>
+</head>
+<body>
+<div class="win" style="--w:400px">
+  <header class="win-head">
+    <div class="lights"><i></i><i></i><i></i></div>
+    <div class="win-title"><span class="ico">🗒️</span>快速便签<span class="win-sub">随手记录</span></div>
+    <div class="spacer"></div>
+    <span class="badge" id="note-count">1 张</span>
+  </header>
+
+  <div class="win-body">
+    <div class="note-tabs" id="tabs"></div>
+
+    <div class="row between">
+      <div class="swatches" id="colors">
+        <button class="swatch-btn" data-color="yellow" style="background:#fde68a" title="暖黄"></button>
+        <button class="swatch-btn" data-color="pink" style="background:#fbcfe8" title="樱花粉"></button>
+        <button class="swatch-btn" data-color="blue" style="background:#bfdbfe" title="天空蓝"></button>
+        <button class="swatch-btn" data-color="green" style="background:#bbf7d0" title="抹茶绿"></button>
+      </div>
+      <span class="tiny muted save-hint" id="save-hint">已自动保存</span>
+    </div>
+
+    <div class="row hidden" id="rename-bar">
+      <input type="text" id="rename-input" maxlength="14" placeholder="给这张便签起个名字…">
+      <button class="btn sm primary" id="rename-ok">确定</button>
+      <button class="btn sm ghost" id="rename-cancel">取消</button>
+    </div>
+
+    <textarea id="editor" placeholder="在这里写点什么喵~ 内容会自动保存到本地 (｡･ω･｡)"></textarea>
+
+    <div class="row between tiny muted">
+      <span id="meta">0 字 · 从未修改</span>
+      <span id="clock" class="mono"></span>
+    </div>
+
+    <div class="btns">
+      <button class="btn primary grow" id="new-note">＋ 新建便签</button>
+      <button class="btn" id="rename">✎ 重命名</button>
+      <button class="btn danger" id="del-note">删除</button>
+    </div>
+    <button class="btn ghost block sm" id="clear-all">清空全部便签</button>
+  </div>
+
+  <footer class="win-foot">
+    <span class="dot live"></span><span id="foot">便签已就绪</span>
+    <div class="spacer" style="flex:1"></div>
+    <span class="tiny">自动保存 · 本地存储</span>
+  </footer>
+</div>
+
+<script src="../assets/pl.js"></script>
+<script src="../assets/compact.js"></script>
+<script>
+(function () {
+  const { $, $$, toast, store, pad } = PL;
+
+  const KEY = 'sticky-notes';
+  const COLOR_KEY = 'sticky-color';
+  const COLORS = {
+    yellow: { name: '暖黄', bg: 'color-mix(in srgb, #fde68a 34%, var(--surface-2))' },
+    pink:   { name: '樱花粉', bg: 'color-mix(in srgb, #fbcfe8 34%, var(--surface-2))' },
+    blue:   { name: '天空蓝', bg: 'color-mix(in srgb, #bfdbfe 34%, var(--surface-2))' },
+    green:  { name: '抹茶绿', bg: 'color-mix(in srgb, #bbf7d0 34%, var(--surface-2))' }
+  };
+
+  let notes = store.get(KEY, null);
+  let activeId = store.get('sticky-active', '');
+  let saveTimer = 0;
+
+  /* ---------- 多窗口归属 ----------
+     便签数据本身是共享的一份（都读 pl:sticky-notes），
+     但每个宿主窗口可以只显示其中几张 —— 这份「显示哪几张、什么顺序」
+     记在**窗口级 config.notes** 里（逗号分隔的 id），由宿主持久化。
+
+       ownedIds === null  → 显示全部（老窗口的默认，向后兼容）
+       ownedIds === [...] → 只显示这些，且顺序就是标签顺序
+
+     窗口 id 由宿主在 workbench:init 里下发，桥接代码存在 window.__wbWindowId。
+     宿主每次改 config 都会派发 pl:wb-config 事件，这里据此重渲染。 */
+  let winId = '';
+  let ownedIds = null;
+
+  /** 是否跑在宿主的 iframe 里（画廊独立打开时为 false） */
+  function inHost() {
+    try { return window.parent !== window; } catch (e) { return false; }
+  }
+
+  /**
+   * 本窗口应该显示哪些便签（顺序即标签顺序）。
+   *
+   * 三种回退都要照顾到：
+   *   - 没记归属 → 全部
+   *   - 记了但被记的便签都删光了 → 回落到全部，别让窗口空着
+   *   - 记了但部分被删 → 只显示还在的
+   */
+  function viewNotes() {
+    if (!ownedIds || !ownedIds.length) return notes;
+    const map = new Map(notes.map(n => [n.id, n]));
+    const list = ownedIds.map(id => map.get(id)).filter(Boolean);
+    return list.length ? list : notes;
+  }
+
+  /** 把本窗口的归属写回宿主（宿主存进该窗口的 config.notes） */
+  function postOwn() {
+    if (!inHost() || !winId || !ownedIds) return;
+    try {
+      parent.postMessage({ type: 'pl:notes-own', winId: winId, ids: ownedIds.slice() }, '*');
+    } catch (e) { /* 脱离 iframe 时忽略 */ }
+  }
+
+  /** 宿主下发的 config.notes 变了 */
+  function applyConfigNotes(v) {
+    const next = v ? String(v).split(',').filter(Boolean) : null;
+    const same = (!ownedIds && !next) ||
+      (ownedIds && next && ownedIds.join(',') === next.join(','));
+    if (same) return;
+    ownedIds = next;
+    render();
+  }
+
+  window.addEventListener('pl:wb-config', e => {
+    const cfg = (e && e.detail) || window.__wbConfig || {};
+    if (window.__wbWindowId) winId = window.__wbWindowId;
+    applyConfigNotes(cfg.notes);
+  });
+
+  if (!Array.isArray(notes) || !notes.length) {
+    notes = [{
+      id: 'n' + Date.now().toString(36),
+      title: '便签 1',
+      text: '欢迎来到快速便签喵~\n\n· 左边点标签切换便签\n· 内容改动会自动保存\n· 想换颜色就点上面的小色块 (｡･ω･｡)',
+      color: 'yellow',
+      at: Date.now()
+    }];
+  }
+
+  function save() { store.set(KEY, notes); }
+
+  function current() {
+    // 只在**本窗口可见**的便签里找：拖出去之后本窗口已经没有那张了，
+    // 若还在全量 notes 里找它，编辑器会编辑一张本窗口看不到的便签
+    const list = viewNotes();
+    let n = list.find(x => x.id === activeId);
+    if (!n) { n = list[0] || notes[0]; activeId = n.id; }
+    return n;
+  }
+
+  function fmtStamp(ts) {
+    const d = new Date(ts);
+    return PL.today() === d.toISOString().slice(0, 10)
+      ? '今天 ' + pad(d.getHours()) + ':' + pad(d.getMinutes())
+      : (d.getMonth() + 1) + '月' + d.getDate() + '日 ' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+  }
+
+  /* ---------- 渲染 ---------- */
+  function renderTabs() {
+    const box = $('#tabs');
+    box.innerHTML = '';
+    // 只画本窗口归属的那几张（顺序即标签顺序）
+    const list = viewNotes();
+    list.forEach(n => {
+      const b = document.createElement('button');
+      b.className = 'note-tab' + (n.id === current().id ? ' active' : '');
+      b.dataset.id = n.id;
+      const sw = document.createElement('i');
+      sw.className = 'sw';
+      sw.style.background = (COLORS[n.color] || COLORS.yellow).bg;
+      b.appendChild(sw);
+      b.appendChild(document.createTextNode(n.title));
+      b.onclick = () => {
+        // 拖动刚结束时浏览器还会补一个 click，别让它把当前便签切走
+        if (justDragged) return;
+        activate(n);
+      };
+      bindTabDrag(b, n);
+      box.appendChild(b);
+    });
+    $('#note-count').textContent = viewNotes().length + ' 张';
+  }
+
+  /** 切到某张便签（点标签 / 拖动结束后都可能调用） */
+  function activate(n) {
+    activeId = n.id;
+    store.set('sticky-active', activeId);
+    closeRename();            // 切换便签时收起重命名栏，避免误改到别的便签
+    render();
+    toast('切换到「' + n.title + '」');
+  }
+
+  /* ============================================================
+     拖动便签标题：卡片内改顺序 · 拖出去变独立窗口 · 拖到别的
+     便签窗口上并进去
+     ------------------------------------------------------------
+     插件跑在 iframe 里，看不见别的卡片，也不能新建窗口或改别的窗口的
+     配置 —— 所以这里只负责两件事：
+       ① 把鼠标位置换算成**父页面视口坐标**发给宿主
+       ② 画自己的视觉反馈（插入位竖条 / 拖出去时的虚线框）
+     落点判定与真正的窗口操作由宿主完成（见 core/cardDrag.ts 与
+     Desktop.tsx 的「卡片间拖放仲裁」），判定结果再回传过来。
+
+     ⚠ 坐标必须换算，不能直接发 clientX：iframe 被桌面画布的
+       transform: scale() 缩放过，iframe 内部 1px 在父页面上不是 1px。
+       用 frameElement.getBoundingClientRect()（视觉矩形）与
+       frameElement.clientWidth（布局宽度）的比值还原。
+     ============================================================ */
+  let justDragged = false;      // 拖动刚结束，抑制浏览器补发的 click
+  let draggingId = '';          // 正在拖的便签 id
+  let pendingBeforeId = '';     // 松手时要插到哪张之前（'' = 插到最后）
+  let dragOutside = false;      // 鼠标当前是否已拖出本卡片（由宿主回执更新）
+
+  /** iframe 内坐标 → 父页面视口坐标 */
+  function toParentXY(cx, cy) {
+    const fe = window.frameElement;
+    if (!fe) return { x: cx, y: cy };
+    const r = fe.getBoundingClientRect();
+    const iw = fe.clientWidth || 1;
+    const ih = fe.clientHeight || 1;
+    return { x: r.left + cx * (r.width / iw), y: r.top + cy * (r.height / ih) };
+  }
+
+  /** 把 itemId 从 list 里挪到 beforeId 之前（beforeId 为空则挪到最后） */
+  function moveInList(list, itemId, beforeId) {
+    const arr = list.filter(x => x !== itemId);
+    if (!beforeId) { arr.push(itemId); return arr; }
+    const i = arr.indexOf(beforeId);
+    if (i < 0) arr.push(itemId); else arr.splice(i, 0, itemId);
+    return arr;
+  }
+
+  /** 把拖动阶段发给宿主 */
+  function emitDrag(phase, ev) {
+    if (!inHost() || !winId) return;
+    const p = toParentXY(ev.clientX, ev.clientY);
+    const cur = notes.find(x => x.id === draggingId) || {};
+    try {
+      parent.postMessage({
+        type: 'pl:card-drag',
+        winId: winId,
+        itemId: draggingId,
+        itemLabel: cur.title || '',
+        // 全部便签 id：宿主据此算出「源窗口剩哪些、目标窗口该有哪些」，
+        // 不必在松手那一刻再反问插件一遍（那样会有可见的延迟）
+        allIds: notes.map(x => x.id),
+        phase: phase,
+        x: p.x,
+        y: p.y,
+      }, '*');
+    } catch (e) { /* 脱离 iframe 时忽略 */ }
+  }
+
+  /** 按鼠标横向位置摆插入位竖条 */
+  function moveGap(cx) {
+    const box = $('#tabs');
+    const tabs = Array.prototype.slice.call(box.querySelectorAll('.note-tab'));
+    let beforeId = '';
+    for (let i = 0; i < tabs.length; i++) {
+      const r = tabs[i].getBoundingClientRect();
+      if (cx < r.left + r.width / 2) { beforeId = tabs[i].dataset.id; break; }
+    }
+    pendingBeforeId = beforeId;
+    let gap = box.querySelector('.note-gap');
+    if (!gap) { gap = document.createElement('div'); gap.className = 'note-gap'; }
+    const ref = beforeId ? tabs.find(t => t.dataset.id === beforeId) : null;
+    if (ref) box.insertBefore(gap, ref); else box.appendChild(gap);
+  }
+
+  function clearGap() {
+    const gap = $('#tabs').querySelector('.note-gap');
+    if (gap) gap.remove();
+  }
+
+  function bindTabDrag(btn, n) {
+    btn.addEventListener('mousedown', e => {
+      if (e.button !== 0) return;
+      const sx = e.clientX, sy = e.clientY;
+      let started = false;
+
+      const onMove = ev => {
+        // 位移超过 4px 才算拖动 —— 否则手一抖就把点击当成了拖拽
+        if (!started) {
+          if (Math.abs(ev.clientX - sx) < 4 && Math.abs(ev.clientY - sy) < 4) return;
+          started = true;
+          draggingId = n.id;
+          pendingBeforeId = '';
+          dragOutside = false;
+          btn.classList.add('dragging');
+          document.body.classList.add('note-dragging');
+          emitDrag('start', ev);
+        }
+        /* 只有「还在本卡片里」才画插入位竖条。
+           鼠标已经拖出卡片时，宿主的回执会把 dragOutside 置真 ——
+           若这里还继续画，竖条会随着每次 mousemove 被建出来又被
+           回执清掉，看起来一闪一闪的。 */
+        if (!dragOutside) moveGap(ev.clientX);
+        emitDrag('move', ev);
+      };
+
+      const onUp = ev => {
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp);
+        if (!started) return;            // 没动过 → 交给 onclick 正常切换
+
+        justDragged = true;
+        setTimeout(() => { justDragged = false; }, 0);
+        clearGap();
+        btn.classList.remove('dragging');
+        document.body.classList.remove('note-dragging');
+
+        if (inHost() && winId) {
+          // 落点由宿主判定，结果通过 pl:card-drop 回来（见下面的监听）
+          emitDrag('end', ev);
+        } else {
+          // 画廊里独立打开时没有宿主可问，就只做本窗口内排序
+          const base = viewNotes().map(x => x.id);
+          ownedIds = moveInList(base, n.id, pendingBeforeId);
+          draggingId = '';
+          pendingBeforeId = '';
+          render();
+        }
+      };
+
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+    });
+  }
+
+  /** 宿主的落点判定回执 */
+  window.addEventListener('message', e => {
+    const d = e.data || {};
+    if (d.type !== 'pl:card-drop') return;
+    const tabs = $('#tabs');
+    // 「拖出本卡片」= 落点不是本卡片（拆出去 / 并到别的便签窗口 / 悬在别的插件上）
+    dragOutside = d.kind !== 'own';
+    // 只有真的会拆开或合并时才描虚线边；悬在别的插件卡片上是无效落点，不提示
+    tabs.classList.toggle('out', d.kind === 'tearout' || d.kind === 'merge');
+    if (dragOutside) clearGap();
+
+    if (!d.final) return;
+    tabs.classList.remove('out');
+    if (d.kind === 'own') {
+      // 卡片内排序：本窗口的归属顺序就是标签顺序，改完回报给宿主持久化
+      const base = viewNotes().map(x => x.id);
+      ownedIds = moveInList(base, draggingId, pendingBeforeId);
+      postOwn();
+      render();
+      PL.beep(760, .06);
+    } else if (d.kind === 'tearout') {
+      // 源窗口的归属由宿主改好；这里只提示，等 pl:wb-config 回来重渲染
+      toast('已拆成独立窗口喵~', 'ok');
+      PL.beep(880, .09);
+    } else if (d.kind === 'merge') {
+      toast('已并入' + (d.targetLabel ? '「' + d.targetLabel + '」' : '另一个窗口'), 'ok');
+      PL.beep(880, .09);
+    }
+    draggingId = '';
+    pendingBeforeId = '';
+    dragOutside = false;
+  });
+
+  function render() {
+    const n = current();
+    renderTabs();
+    const ed = $('#editor');
+    if (ed.value !== n.text) ed.value = n.text;
+    ed.style.setProperty('--note-bg', (COLORS[n.color] || COLORS.yellow).bg);
+    ed.style.background = (COLORS[n.color] || COLORS.yellow).bg;
+
+    PL.$$('#colors .swatch-btn').forEach(b => b.classList.toggle('on', b.dataset.color === n.color));
+
+    updateMeta();
+    $('#foot').textContent = '正在编辑「' + n.title + '」 · 共 ' + notes.length + ' 张便签';
+    store.set('sticky-active', activeId);
+    save();
+  }
+
+  function updateMeta() {
+    const n = current();
+    const chars = n.text.replace(/\s/g, '').length;
+    $('#meta').textContent = n.text.length + ' 字（不含空格 ' + chars + '） · 更新于 ' + fmtStamp(n.at);
+  }
+
+  function flashSaved() {
+    const hint = $('#save-hint');
+    hint.textContent = '保存中…';
+    hint.style.opacity = '1';
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(() => {
+      hint.textContent = '已自动保存 ✓';
+      setTimeout(() => { hint.style.opacity = '.55'; }, 1200);
+    }, 220);
+  }
+
+  /* ---------- 编辑 ---------- */
+  $('#editor').oninput = e => {
+    const n = current();
+    n.text = e.target.value;
+    n.at = Date.now();
+    save();
+    updateMeta();
+    flashSaved();
+  };
+
+  PL.$$('#colors .swatch-btn').forEach(b => {
+    b.onclick = () => {
+      const n = current();
+      n.color = b.dataset.color;
+      n.at = Date.now();
+      save();
+      render();
+      toast('便签换成「' + COLORS[n.color].name + '」啦', 'ok');
+      PL.beep(700, .07);
+    };
+  });
+
+  $('#new-note').onclick = () => {
+    if (notes.length >= 12) { toast('便签太多啦，先删掉几张吧喵~', 'warn'); return; }
+    const n = {
+      id: 'n' + Date.now().toString(36) + Math.floor(Math.random() * 99),
+      title: '便签 ' + (notes.length + 1),
+      text: '',
+      color: PL.pick(Object.keys(COLORS)),
+      at: Date.now()
+    };
+    notes.push(n);
+    // 本窗口若已经有明确归属，新便签要落进来，否则它一出生就看不见
+    if (ownedIds) { ownedIds = ownedIds.concat([n.id]); postOwn(); }
+    activeId = n.id;
+    save();
+    render();
+    $('#editor').focus();
+    toast('新建了一张空便签，写点什么吧喵~', 'ok');
+    PL.beep(880, .09);
+  };
+
+  // 重命名：界面内联输入框，不用阻塞式弹窗
+  $('#rename').onclick = () => {
+    const bar = $('#rename-bar');
+    const input = $('#rename-input');
+    input.value = current().title;
+    bar.classList.remove('hidden');
+    input.focus();
+    input.select();
+  };
+
+  function closeRename() {
+    $('#rename-bar').classList.add('hidden');
+  }
+
+  $('#rename-ok').onclick = () => {
+    const n = current();
+    const v = String($('#rename-input').value || '').trim().slice(0, 14);
+    if (!v) { toast('名字不能是空的喵~', 'warn'); return; }
+    n.title = v;
+    n.at = Date.now();
+    save();
+    closeRename();
+    render();
+    toast('已重命名为「' + v + '」', 'ok');
+    PL.beep(820, .08);
+  };
+
+  $('#rename-cancel').onclick = () => { closeRename(); toast('已取消重命名'); };
+
+  $('#rename-input').onkeydown = e => {
+    if (e.key === 'Enter') $('#rename-ok').click();
+    if (e.key === 'Escape') closeRename();
+  };
+
+  $('#del-note').onclick = () => {
+    if (viewNotes().length <= 1) { toast('最后一张便签要留着喵~', 'warn'); PL.beep(300, .14, 'square'); return; }
+    const n = current();
+    notes = notes.filter(x => x.id !== n.id);
+    // 归属里也要划掉它，否则别的窗口的 config.notes 会一直挂着一个死 id
+    if (ownedIds) { ownedIds = ownedIds.filter(id => id !== n.id); postOwn(); }
+    const rest = viewNotes();
+    activeId = (rest[0] || notes[0]).id;
+    save();
+    render();
+    toast('已删除「' + n.title + '」', 'warn');
+  };
+
+  // 危险操作：界面内二次确认
+  let armed = false, armedTimer = 0;
+  $('#clear-all').onclick = () => {
+    const btn = $('#clear-all');
+    if (!armed) {
+      armed = true;
+      btn.textContent = '再点一次，清空 ' + notes.length + ' 张便签';
+      btn.classList.add('shake');
+      toast('清空后内容无法恢复，再点一次确认', 'danger');
+      PL.beep(320, .16, 'square');
+      armedTimer = setTimeout(disarm, 3000);
+      return;
+    }
+    disarm();
+    const n = notes.length;
+    notes = [{
+      id: 'n' + Date.now().toString(36), title: '便签 1', text: '', color: 'yellow', at: Date.now()
+    }];
+    activeId = notes[0].id;
+    save();
+    render();
+    toast('已清空 ' + n + ' 张便签，给你留了一张空白的', 'danger');
+  };
+
+  function disarm() {
+    armed = false;
+    clearTimeout(armedTimer);
+    const btn = $('#clear-all');
+    btn.textContent = '清空全部便签';
+    btn.classList.remove('shake');
+  }
+
+  /* ---------- 每秒走动的时钟 ---------- */
+  setInterval(() => {
+    $('#clock').textContent = PL.fmtClock();
+    // 便签内容 / 数量变化后，精简组件同步刷新
+    PL.compactRefreshAll();
+  }, 1000);
+
+  // 切换标签/关闭前兜底保存一次
+  window.addEventListener('beforeunload', save);
+
+  render();
+  $('#clock').textContent = PL.fmtClock();
+
+  /* 桥接代码在 pl.js 里，比本脚本先执行；它可能在我们挂上 pl:wb-config
+     监听之前就已经收到过 init。这里主动读一次桥接留下的两个全局量兜底，
+     保证初始归属与窗口 id 不会丢（正常时序下事件已经给过一次，这里是幂等的）。 */
+  if (inHost()) {
+    winId = window.__wbWindowId || '';
+    applyConfigNotes((window.__wbConfig || {}).notes);
+  }
+
+  /* ============================================================
+     桌面精简形态：便签内容 / 便签列表 / 便签数
+     ============================================================ */
+  const cwf = PL.cwf;
+
+  /** 便签配色 → 列表小图标 */
+  const CW_COLOR_ICON = { yellow: '🟡', pink: '🌸', blue: '🔵', green: '🍃' };
+
+  /** 往 HTML 里塞用户文本前先转义（便签标题/正文都是用户输入） */
+  function cwEsc(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+
+  /**
+   * 把便签颜色刷到组件外壳上，让精简形态和完整界面同一个底色。
+   *
+   * 刷的是 .cw 而不是 .cw-face：face 是 .cw 的子元素且绝对定位，
+   * 直接给它上底色会盖住 .cw::before 那条顶部主色高光。
+   * 传空颜色则清除（列表/统计格式没有单张便签的颜色可言）。
+   *
+   * 必须带 'important'：宿主模式有一条
+   *   html.pl-host .cw { background: transparent !important }
+   * （见 compact.css 的「宿主模式」段 —— 卡片自己已是窗口，
+   * 组件不该再涂一层底色）。样式表里的 !important 会压过普通内联样式，
+   * 只有内联的 !important 才在它之上。不带就完全看不到颜色。
+   */
+  function cwTint(face, color) {
+    const cw = face && face.parentElement;
+    if (!cw) return;
+    const bg = color ? (COLORS[color] || COLORS.yellow).bg : '';
+    cw.style.setProperty('background', bg, 'important');
+  }
+
+  /** 精简组件要展示的便签（只在本窗口归属的那几张里挑） */
+  function cwNote(o) {
+    const pool = viewNotes();
+    const w = o && o.which;
+    // 按标题选中的某一张：值是 'id:<便签 id>'
+    if (w && String(w).indexOf('id:') === 0) {
+      const id = String(w).slice(3);
+      const hit = pool.find(x => x.id === id);
+      // 选中的那张被删掉了 → 回落到当前便签，不让组件空着
+      if (hit) return hit;
+    }
+    if (w === 'latest') {
+      const latest = pool.slice().sort((a, b) => b.at - a.at)[0];
+      return latest || current();
+    }
+    return current();
+  }
+
+  /**
+   * 「显示哪张」的候选项。
+   *
+   * 写成函数而不是静态数组：便签可以新增 / 重命名 / 删除，
+   * 静态数组写完就过期了。compact.js 每次渲染设置面板和每次
+   * 上报清单时都会重新调用它（见 compact.js 的 optChoices）。
+   *
+   * 只列**本窗口归属**的便签：拖出去成独立窗口后，那个窗口的
+   * 下拉里不该还出现已经不属于它的便签。
+   */
+  function cwWhichChoices() {
+    const pool = viewNotes();
+    const list = [
+      { value: 'active', label: '当前便签' },
+      { value: 'latest', label: '最近修改的' },
+    ];
+    // 只有一张时不必再列一遍标题，免得和上面两项重复
+    if (pool.length > 1) {
+      pool.forEach(n => list.push({ value: 'id:' + n.id, label: '「' + n.title + '」' }));
+    }
+    return list;
+  }
+
+  PL.compact({
+    id: 'sticky-notes',
+    name: '快速便签',
+    icon: '🗒️',
+    defFormat: 'text',
+    defSize: 'square',
+    data: () => ({ notes: notes, activeId: activeId }),
+    formats: [
+      {
+        id: 'text',
+        name: '便签内容',
+        icon: '📝',
+        options: [
+          // options 写成函数：候选项按当前便签的标题实时生成
+          { key: 'which', type: 'select', label: '显示哪张', def: 'active',
+            options: cwWhichChoices },
+          { key: 'showBy', type: 'bool', label: '显示标题与时间', def: true },
+        ],
+        render: (o) => {
+          const n = cwNote(o);
+          const text = n && n.text ? String(n.text) : '';
+          const by = o.showBy === false || !n ? '' : n.title + ' · ' + fmtStamp(n.at);
+          /* 正文用 textarea 而不是 cwf.text 的 <div>：
+             用户要能在精简形态里直接改内容，div 没法输入。
+             data-cw-hold 是给 compact.js 的信号 —— 只要它还握着焦点，
+             运行时就不重绘（组件每秒刷一次，重绘会把输入框整个换掉，
+             焦点丢失、光标跳回开头，表现是「打一个字就断」）。 */
+          return {
+            cls: 'cw-note',
+            html:
+              '<textarea class="q" data-cw-hold spellcheck="false" ' +
+              'placeholder="点这里直接写点什么喵~ (｡･ω･｡)">' + cwEsc(text) + '</textarea>' +
+              (by ? '<div class="by">' + cwEsc(by) + '</div>' : ''),
+            onPaint: (face) => cwTint(face, n && n.color),
+            onMount: (face, oo) => {
+              const ta = face.querySelector('textarea.q');
+              if (!ta) return;
+              ta.addEventListener('input', () => {
+                const cur = cwNote(oo);
+                if (!cur) return;
+                cur.text = ta.value;
+                cur.at = Date.now();
+                save();
+                // 完整窗口正开着同一张时同步过去，两边不会各说各话
+                if (current().id === cur.id) {
+                  const ed = $('#editor');
+                  if (ed && ed.value !== cur.text) ed.value = cur.text;
+                  updateMeta();
+                }
+                flashSaved();
+              });
+              // Esc 放手：失焦后运行时恢复每秒刷新，时间戳才会跟着更新
+              ta.addEventListener('keydown', (e) => {
+                if (e.key === 'Escape') { e.stopPropagation(); ta.blur(); }
+              });
+            },
+          };
+        },
+      },
+      {
+        id: 'list',
+        name: '便签列表',
+        icon: '📋',
+        options: [
+          { key: 'max', type: 'num', label: '显示条数', def: 3, min: 2, max: 5 },
+          { key: 'sort', type: 'select', label: '排序', def: 'recent',
+            options: [
+              { value: 'recent', label: '最近修改' },
+              { value: 'order', label: '标签顺序' },
+            ] },
+        ],
+        render: (o) => {
+          const arr = o.sort === 'order' ? notes.slice() : notes.slice().sort((a, b) => b.at - a.at);
+          const rows = arr.map(n => ({
+            icon: CW_COLOR_ICON[n.color] || '🗒️',
+            text: n.title,
+            right: String(n.text || '').replace(/\s/g, '').length + ' 字',
+          }));
+          if (!rows.length) rows.push({ icon: '🗒️', text: '还没有便签喵~', right: '' });
+          const out = cwf.list({ rows, max: Number(o.max) || 3 });
+          // 列表没有「某一张便签」的颜色可言，清掉上一种格式可能留下的底色
+          out.onPaint = (face) => cwTint(face, null);
+          return out;
+        },
+      },
+      {
+        id: 'stat',
+        name: '便签数',
+        icon: '🔢',
+        options: [
+          { key: 'metric', type: 'select', label: '统计什么', def: 'count',
+            options: [
+              { value: 'count', label: '便签张数' },
+              { value: 'chars', label: '总字数' },
+            ] },
+          { key: 'label', type: 'text', label: '标签文字', def: '' },
+        ],
+        render: (o) => {
+          let out;
+          if (o.metric === 'chars') {
+            const n = notes.reduce((s, x) => s + String(x.text || '').replace(/\s/g, '').length, 0);
+            out = cwf.stat({ value: n, unit: '字', name: o.label || '便签总字数' });
+          } else {
+            out = cwf.stat({ value: notes.length, unit: '张', name: o.label || '便签' });
+          }
+          out.onPaint = (face) => cwTint(face, null);
+          return out;
+        },
+      },
+    ],
+  });
+})();
+</script>
+</body>
+</html>

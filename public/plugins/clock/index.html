@@ -3,41 +3,73 @@
 <head>
 <meta charset="UTF-8" />
 <style>
-  :root { --fg:#23263a; --muted:#8a90a6; --bg:transparent; }
-  [data-theme="dark"] { --fg:#dfe3f0; --muted:#7d84a3; }
-  html,body{height:100%;margin:0;background:var(--bg);}
+  /* 背景：正文自带一层底色，深色取「比卡片更深一档」(卡片 --card #1e2430、画布 --bg #0e1117)，
+     形成内凹层次；浅色给中性底，与卡片白区分。文字色仍随主题切换。 */
+  :root { --fg:#23263a; --muted:#8a90a6; --bg:#f5f7fa; }
+  [data-theme="dark"] { --fg:#ffffff; --muted:#c0c8e0; --bg:#13171e; }
+  html,body{height:100%;margin:0;background:var(--bg);user-select:none;}
   body{display:grid;place-items:center;font-family:-apple-system,'PingFang SC','Microsoft YaHei',sans-serif;color:var(--fg);}
-  .time{font-size:34px;font-weight:700;font-variant-numeric:tabular-nums;letter-spacing:1px;}
-  .date{margin-top:6px;text-align:center;color:var(--muted);font-size:13px;}
-  .sec-dot{opacity:.55;font-size:24px;vertical-align:4px;}
+  .time{font-size:34px;font-weight:700;font-variant-numeric:tabular-nums;letter-spacing:1px;user-select:none;}
+  .date{margin-top:6px;text-align:center;color:var(--muted);font-size:13px;user-select:none;}
+  .sec-dot{opacity:.55;font-size:24px;vertical-align:4px;user-select:none;}
+  .tz{margin-top:4px;font-size:11px;color:var(--muted);user-select:none;}
 </style>
 </head>
 <body>
   <div>
     <div class="time" id="time">--:--<span class="sec-dot">:--</span></div>
     <div class="date" id="date"></div>
+    <div class="tz" id="tz"></div>
   </div>
 <script>
-  // ============ Workbench iframe 插件：时钟（每秒 tick 刷新） ============
-  // 契约：加载完成后向宿主发送 plugin:ready；收到 workbench:tick 时重绘
-  function render() {
-    var d = new Date(), p = function (n) { return String(n).padStart(2, '0') }
-    var week = ['日','一','二','三','四','五','六'][d.getDay()]
-    document.getElementById('time').innerHTML =
-      p(d.getHours()) + ':' + p(d.getMinutes()) + '<span class="sec-dot">:' + p(d.getSeconds()) + '</span>'
-    document.getElementById('date').textContent =
-      d.getFullYear() + ' 年 ' + (d.getMonth() + 1) + ' 月 ' + d.getDate() + ' 日 · 星期' + week
+  // ============ Workbench iframe 插件：时钟（时区可调 + 半分钟校对） ============
+  var TZ_OFFSET = 8 // 时区偏移（小时），默认东八区
+
+  function getTZLabel() {
+    var sign = TZ_OFFSET >= 0 ? '+' : ''
+    return 'UTC' + sign + TZ_OFFSET
   }
+
+  function render() {
+    var d = new Date()
+    // 应用时区偏移
+    var utc = d.getTime() + (d.getTimezoneOffset() * 60000)
+    var local = new Date(utc + (TZ_OFFSET * 3600000))
+    var p = function (n) { return String(n).padStart(2, '0') }
+    var week = ['日','一','二','三','四','五','六'][local.getDay()]
+    document.getElementById('time').innerHTML =
+      p(local.getHours()) + ':' + p(local.getMinutes()) + '<span class="sec-dot">:' + p(local.getSeconds()) + '</span>'
+    document.getElementById('date').textContent =
+      local.getFullYear() + ' 年 ' + (local.getMonth() + 1) + ' 月 ' + local.getDate() + ' 日 · 星期' + week
+    document.getElementById('tz').textContent = getTZLabel()
+  }
+
+  // 半分钟校对：每 30 秒与宿主 tick 对齐一次，防止漂移
+  var calibrateTimer = setInterval(function() {
+    render()
+  }, 30 * 1000)
+
+  // 应用宿主下发的插件级配置（config.tz 为相对 UTC 的小时偏移，字符串）
+  function applyConfig(cfg) {
+    if (!cfg) return
+    var raw = cfg.tz
+    if (raw === undefined || raw === null || raw === '') return
+    var n = Number(raw)
+    if (isFinite(n)) TZ_OFFSET = n
+  }
+
   window.addEventListener('message', function (e) {
     var msg = e.data || {}
     if (msg.type === 'workbench:init') {
       document.documentElement.dataset.theme = msg.payload.theme
+      applyConfig(msg.payload.config)
       render()
     }
+    if (msg.type === 'workbench:config') { applyConfig(msg.payload); render() }
     if (msg.type === 'workbench:tick') render()
     if (msg.type === 'workbench:theme') document.documentElement.dataset.theme = msg.payload.theme
   })
-  // 握手：通知宿主插件已就绪
+
   parent.postMessage({ type: 'plugin:ready', payload: { id: 'workbench.clock' } }, '*')
   render()
 </script>

@@ -1,0 +1,622 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>亮度色温 · 屏幕护眼调节</title>
+<link rel="stylesheet" href="../assets/theme.css">
+<link rel="stylesheet" href="../assets/compact.css">
+<style>
+  /* 本插件专属配色 */
+  :root { --accent: #f59e0b; --accent-2: #fbbf24; }
+
+  /* ---- 预览区：亮度用 filter，色温用覆盖色层 ---- */
+  .preview { position: relative; height: 150px; border-radius: var(--radius-sm); overflow: hidden;
+             border: 1px solid var(--border); background: var(--surface-2); }
+  .scene { position: absolute; inset: 0; transition: filter .12s linear;
+           background: linear-gradient(160deg, #4f8cff, #7ad0ff 45%, #ffd479 100%); }
+  .scene .sun { position: absolute; right: 22px; top: 18px; width: 34px; height: 34px; border-radius: 50%;
+                background: radial-gradient(circle at 35% 35%, #fff6d8, #ffcf4d); box-shadow: 0 0 26px #ffd479; }
+  .scene .hill { position: absolute; left: -10%; right: -10%; bottom: -32px; height: 76px; border-radius: 50%;
+                 background: linear-gradient(180deg, #2f8f5b, #1d6b45); }
+  .scene .hill.b { left: 30%; bottom: -46px; background: linear-gradient(180deg, #3aa76a, #226f49); }
+  .scene .winbox { position: absolute; left: 16px; top: 22px; width: 92px; padding: 7px 8px; border-radius: 8px;
+                   background: rgba(255,255,255,.82); box-shadow: 0 6px 16px rgba(0,0,0,.18); }
+  .scene .winbox i { display: block; height: 5px; border-radius: 3px; background: #8b95a8; margin-bottom: 4px; }
+  .scene .winbox i:nth-child(1) { width: 70%; background: #5b6478; }
+  .scene .winbox i:nth-child(3) { width: 45%; }
+  .tint { position: absolute; inset: 0; pointer-events: none; transition: background .12s linear; }
+  .pv-tag { position: absolute; left: 8px; bottom: 8px; z-index: 2;
+            background: rgba(0,0,0,.42); color: #fff; font-size: 10.5px; font-weight: 600;
+            padding: 3px 8px; border-radius: 99px; backdrop-filter: blur(4px); font-family: var(--mono); }
+
+  /* ---- 滑块行 ---- */
+  .srow { display: flex; align-items: center; gap: 9px; }
+  .srow .ic { font-size: 15px; width: 20px; text-align: center; }
+  .srow .val { font-family: var(--mono); font-size: 12px; font-weight: 700; width: 62px; text-align: right; }
+  .flash { animation: flash .34s ease; }
+  @keyframes flash { 40% { transform: scale(1.16); color: var(--accent); } }
+
+  .chip .sw { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 5px;
+              vertical-align: -1px; border: 1px solid rgba(0,0,0,.15); }
+
+  .cd { font-family: var(--mono); font-size: 19px; font-weight: 700; letter-spacing: -.4px; }
+  .tip { font-size: 11.5px; line-height: 1.5; }
+</style>
+</head>
+<body>
+<div class="win" style="--w:420px">
+  <header class="win-head">
+    <div class="lights"><i></i><i></i><i></i></div>
+    <div class="win-title"><span class="ico">🔆</span>亮度色温<span class="win-sub">屏幕护眼调节</span></div>
+    <div class="spacer"></div>
+    <span class="badge" id="modeBadge">标准</span>
+  </header>
+
+  <div class="win-body">
+    <!-- 实时预览 -->
+    <div class="preview">
+      <div class="scene" id="scene">
+        <div class="sun"></div>
+        <div class="hill"></div>
+        <div class="hill b"></div>
+        <div class="winbox"><i></i><i></i><i></i></div>
+      </div>
+      <div class="tint" id="tint"></div>
+      <span class="pv-tag" id="pvTag">100% · 6500K</span>
+    </div>
+
+    <!-- 滑块 -->
+    <div class="card col" style="gap:11px">
+      <div class="srow">
+        <span class="ic">☀️</span>
+        <input type="range" id="bright" min="10" max="100" step="1" value="100" aria-label="屏幕亮度">
+        <span class="val" id="brightVal">100%</span>
+      </div>
+      <div class="srow">
+        <span class="ic">🌡️</span>
+        <input type="range" id="temp" min="2000" max="8000" step="100" value="6500" aria-label="屏幕色温">
+        <span class="val" id="tempVal">6500K</span>
+      </div>
+      <div class="row between">
+        <span class="tiny muted">暖 ← 色温 → 冷</span>
+        <div class="row" style="gap:6px">
+          <button class="btn sm" id="reset">重置</button>
+          <button class="btn sm primary" id="savePv">保存为预设</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 预设 -->
+    <div class="row between">
+      <span class="small bold">预设方案</span>
+      <button class="btn sm ghost" id="restorePresets">恢复默认</button>
+    </div>
+    <div class="chips" id="presets"></div>
+
+    <!-- 定时 -->
+    <div class="card col" style="gap:10px">
+      <div class="row between">
+        <div class="col" style="gap:1px">
+          <span class="small bold">日落自动开启夜间模式</span>
+          <span class="tiny muted">到点自动切到夜间预设，日出后恢复</span>
+        </div>
+        <label class="switch"><input type="checkbox" id="autoSw"><i></i></label>
+      </div>
+      <div class="sep"></div>
+      <div class="row" style="gap:8px">
+        <div class="field grow"><span>日落时间</span><input type="time" id="sunset" value="18:30"></div>
+        <div class="field grow"><span>日出时间</span><input type="time" id="sunrise" value="07:00"></div>
+      </div>
+      <div class="row between">
+        <div class="col" style="gap:1px">
+          <span class="tiny muted" id="nextLabel">距离下一次自动切换</span>
+          <b class="cd" id="nextCd">--:--:--</b>
+        </div>
+        <span class="badge" id="phaseBadge">白天</span>
+      </div>
+    </div>
+
+    <!-- 舒适度提示 -->
+    <div class="card row" style="gap:9px;align-items:flex-start">
+      <span style="font-size:17px" id="tipIcon">😺</span>
+      <div class="grow">
+        <div class="small bold" id="tipTitle">眼睛舒适度：很棒</div>
+        <div class="tip muted" id="tipText">当前参数很适合长时间阅读喵~</div>
+      </div>
+    </div>
+  </div>
+
+  <footer class="win-foot">
+    <span class="dot live"></span><span id="foot">已应用 · 100% / 6500K</span>
+    <div class="spacer" style="flex:1"></div>
+    <span class="tiny mono" id="clock">--:--:--</span>
+  </footer>
+</div>
+
+<script src="../assets/pl.js"></script>
+<script src="../assets/compact.js"></script>
+<script>
+(function () {
+  const { $, $$, toast, beep, store, pad, clamp, fmtTime, fmtClock } = PL;
+
+  /* ---------------- 预设方案 ---------------- */
+  const BUILTIN = [
+    { id: 'standard', name: '标准', icon: '🖥️', bright: 100, temp: 6500, color: '#e5e7eb' },
+    { id: 'read',     name: '阅读', icon: '📖', bright: 85,  temp: 5200, color: '#f59e0b' },
+    { id: 'night',    name: '夜间', icon: '🌙', bright: 45,  temp: 3400, color: '#6366f1' },
+    { id: 'eye',      name: '护眼', icon: '👁️', bright: 78,  temp: 4600, color: '#22c55e' },
+    { id: 'game',     name: '游戏', icon: '🎮', bright: 100, temp: 7200, color: '#ec4899' }
+  ];
+
+  /* ---------------- 状态 ---------------- */
+  const saved = store.get('brightness-temp', null) || {};
+  let custom = Array.isArray(saved.custom) ? saved.custom.filter(function (p) {
+    return p && p.name && typeof p.bright === 'number' && typeof p.temp === 'number';
+  }) : [];
+  const state = {
+    bright: typeof saved.bright === 'number' ? clamp(saved.bright, 10, 100) : 100,
+    temp: typeof saved.temp === 'number' ? clamp(saved.temp, 2000, 8000) : 6500,
+    preset: saved.preset || 'standard',
+    auto: !!saved.auto,
+    sunset: /^\d{2}:\d{2}$/.test(saved.sunset) ? saved.sunset : '18:30',
+    sunrise: /^\d{2}:\d{2}$/.test(saved.sunrise) ? saved.sunrise : '07:00',
+    // 被用户删掉的内置预设 id，可用「恢复默认」找回
+    hidden: Array.isArray(saved.hidden) ? saved.hidden.filter(function (id) {
+      return BUILTIN.some(function (p) { return p.id === id; });
+    }) : []
+  };
+  let nightOn = false;                 // 定时夜间模式是否已生效
+
+  const save = function () {
+    store.set('brightness-temp', {
+      bright: state.bright, temp: state.temp, preset: state.preset,
+      auto: state.auto, sunset: state.sunset, sunrise: state.sunrise,
+      custom: custom, hidden: state.hidden
+    });
+  };
+
+  /* ---------------- 元素 ---------------- */
+  const elScene     = $('#scene');
+  const elTint      = $('#tint');
+  const elPvTag     = $('#pvTag');
+  const elBright    = $('#bright');
+  const elBrightVal = $('#brightVal');
+  const elTemp      = $('#temp');
+  const elTempVal   = $('#tempVal');
+  const elPresets   = $('#presets');
+  const elRestore   = $('#restorePresets');
+  const elReset     = $('#reset');
+  const elSavePv    = $('#savePv');
+  const elAutoSw    = $('#autoSw');
+  const elSunset    = $('#sunset');
+  const elSunrise   = $('#sunrise');
+  const elNextCd    = $('#nextCd');
+  const elNextLabel = $('#nextLabel');
+  const elPhaseBadge= $('#phaseBadge');
+  const elModeBadge = $('#modeBadge');
+  const elTipIcon   = $('#tipIcon');
+  const elTipTitle  = $('#tipTitle');
+  const elTipText   = $('#tipText');
+  const elFoot      = $('#foot');
+  const elClock     = $('#clock');
+
+  /* ---------------- 渲染 ---------------- */
+  // 数值变化时闪一下；计时器存在元素上，避免快速连续触发时互相覆盖
+  function flash(el) {
+    if (!el) return;
+    el.classList.remove('flash');
+    void el.offsetWidth;
+    el.classList.add('flash');
+    clearTimeout(el._flashT);
+    el._flashT = setTimeout(function () { el.classList.remove('flash'); }, 360);
+  }
+
+  // 色温 → 覆盖色层（暖色/冷色 + 透明度）
+  function tintOf(temp) {
+    if (temp < 6500) {
+      const k = (6500 - temp) / 4500;                  // 0 → 1（越暖越强）
+      return 'rgba(255, 152, 56, ' + (k * 0.62).toFixed(3) + ')';
+    }
+    const k = (temp - 6500) / 1500;                    // 0 → 1（越冷越强）
+    return 'rgba(140, 185, 255, ' + (k * 0.34).toFixed(3) + ')';
+  }
+
+  function applyVisual() {
+    // 亮度：直接改预览区滤镜
+    elScene.style.filter = 'brightness(' + (state.bright / 100).toFixed(2) + ') saturate(' +
+      (1 - (6500 - state.temp) / 4500 * 0.18).toFixed(2) + ')';
+    elTint.style.background = tintOf(state.temp);
+    elPvTag.textContent = state.bright + '% · ' + state.temp + 'K';
+    elBrightVal.textContent = state.bright + '%';
+    elTempVal.textContent = state.temp + 'K';
+    elBright.value = state.bright;
+    elTemp.value = state.temp;
+  }
+
+  function comfort() {
+    const b = state.bright, t = state.temp;
+    let icon = '😺', title = '眼睛舒适度：很棒', text = '当前参数很适合长时间阅读喵~';
+    if (b < 35) {
+      icon = '😿'; title = '眼睛舒适度：偏暗';
+      text = '亮度低于 35%，暗环境下看久了容易累，建议调到 45% 以上。';
+    } else if (b > 95 && t > 6800) {
+      icon = '😾'; title = '眼睛舒适度：偏刺眼';
+      text = '高亮度 + 冷色温蓝光较多，白天尚可，晚上建议切到「夜间」或「护眼」。';
+    } else if (t <= 3800) {
+      icon = '😌'; title = '眼睛舒适度：夜间友好';
+      text = '色温偏暖，褪黑素干扰小，适合睡前使用喵~';
+    } else if (t >= 7000) {
+      icon = '🧐'; title = '眼睛舒适度：偏冷';
+      text = '冷色温让文字更锐利，适合设计校对，但别盯太久哦。';
+    } else if (b >= 70 && b <= 92) {
+      icon = '😺'; title = '眼睛舒适度：良好';
+      text = '亮度与色温都在舒适区间，继续保持~';
+    }
+    elTipIcon.textContent = icon;
+    elTipTitle.textContent = title;
+    elTipText.textContent = text;
+  }
+
+  function allPresets() {
+    const hidden = state.hidden || [];
+    return BUILTIN.concat(custom).filter(function (p) { return hidden.indexOf(p.id) < 0; });
+  }
+
+  function renderPresets() {
+    const list = allPresets();
+    elPresets.innerHTML = '';
+
+    if (!list.length) {
+      elPresets.innerHTML = '<div class="empty" style="flex:1 0 100%">预设方案都被删掉啦喵~<br>' +
+        '<span class="tiny">点右边「恢复默认」找回内置方案</span></div>';
+    }
+
+    list.forEach(function (p) {
+      const b = document.createElement('button');
+      b.className = 'chip' + (state.preset === p.id ? ' on' : '');
+      b.dataset.preset = p.id;
+      b.innerHTML = '<span class="sw" style="background:' + (p.color || '#94a3b8') + '"></span>' +
+        p.icon + ' ' + p.name;
+      b.onclick = function () { applyPreset(p.id); };
+      b.title = '右键删除该预设';
+      elPresets.appendChild(b);
+    });
+
+    const cur = list.filter(function (p) { return p.id === state.preset; })[0];
+    elModeBadge.textContent = cur ? cur.icon + ' ' + cur.name : '自定义参数';
+    elModeBadge.className = 'badge' + (state.preset === 'night' ? ' danger' : state.preset === 'eye' ? ' ok' : '');
+    elRestore.textContent = (state.hidden || []).length ? '恢复默认 (' + state.hidden.length + ')' : '恢复默认';
+  }
+
+  function renderAuto() {
+    elPhaseBadge.textContent = nightOn ? '🌙 夜间模式生效中' : '☀️ 白天模式';
+    elPhaseBadge.className = 'badge' + (nightOn ? ' danger' : ' ok');
+    elFoot.textContent = '已应用 · ' + state.bright + '% / ' + state.temp + 'K' +
+      (state.auto ? ' · 定时已开' : '');
+  }
+
+  // 表单控件与状态同步（只在状态变化时调用，避免每秒覆盖用户正在编辑的输入框）
+  function syncAutoInputs() {
+    elAutoSw.checked = state.auto;
+    elSunset.value = state.sunset;
+    elSunrise.value = state.sunrise;
+  }
+
+  function renderAll() {
+    applyVisual();
+    renderPresets();
+    comfort();
+    renderAuto();
+  }
+
+  /* ---------------- 操作 ---------------- */
+  function setBright(v, quiet) {
+    state.bright = clamp(Math.round(v), 10, 100);
+    state.preset = '';
+    applyVisual();
+    renderPresets();
+    comfort();
+    renderAuto();
+    save();
+    flash(elBrightVal);
+    if (!quiet) beep(620, .05);
+  }
+
+  function setTemp(v, quiet) {
+    state.temp = clamp(Math.round(v / 100) * 100, 2000, 8000);
+    state.preset = '';
+    applyVisual();
+    renderPresets();
+    comfort();
+    renderAuto();
+    save();
+    flash(elTempVal);
+    if (!quiet) beep(700, .05);
+  }
+
+  function applyPreset(pid) {
+    const p = allPresets().filter(function (x) { return x.id === pid; })[0];
+    if (!p) return;
+    state.bright = clamp(p.bright, 10, 100);
+    state.temp = clamp(p.temp, 2000, 8000);
+    state.preset = pid;
+    applyVisual();
+    renderPresets();
+    comfort();
+    renderAuto();
+    save();
+    PL.chime();
+    toast('已套用「' + p.name + '」：亮度 ' + state.bright + '% · 色温 ' + state.temp + 'K', 'ok');
+  }
+
+  elBright.addEventListener('input', function () { setBright(+elBright.value, true); });
+  elBright.addEventListener('change', function () { toast('亮度已设为 ' + state.bright + '%', 'info', 1400); });
+  elTemp.addEventListener('input', function () { setTemp(+elTemp.value, true); });
+  elTemp.addEventListener('change', function () { toast('色温已设为 ' + state.temp + 'K', 'info', 1400); });
+
+  elReset.onclick = function () {
+    state.bright = 100; state.temp = 6500; state.preset = 'standard';
+    applyVisual(); renderPresets(); comfort(); renderAuto(); save();
+    beep(520, .1);
+    toast('已重置为标准方案（100% / 6500K）', 'ok');
+  };
+
+  elSavePv.onclick = function () {
+    if (elSavePv.dataset.arm !== '1') {
+      elSavePv.dataset.arm = '1';
+      elSavePv.textContent = '确认保存？';
+      clearTimeout(elSavePv._t);
+      elSavePv._t = setTimeout(function () {
+        elSavePv.dataset.arm = '0';
+        elSavePv.textContent = '保存为预设';
+      }, 3000);
+      toast('把当前 ' + state.bright + '% / ' + state.temp + 'K 存为自定义预设？再点一次确认', 'info', 2600);
+      return;
+    }
+    clearTimeout(elSavePv._t);
+    elSavePv.dataset.arm = '0';
+    elSavePv.textContent = '保存为预设';
+    const id = 'custom' + Date.now();
+    const name = '我的 ' + custom.length + 1;
+    custom.push({
+      id: id, name: name, icon: '⭐', bright: state.bright, temp: state.temp,
+      color: '#a78bfa', custom: true
+    });
+    custom = custom.slice(-4);                     // 最多保留 4 个自定义预设
+    state.preset = id;
+    save(); renderAll();
+    toast('已保存自定义预设「' + name + '」', 'ok');
+  };
+
+  // 右键删除预设（内置方案进入 hidden 列表，可随时恢复）
+  elPresets.addEventListener('contextmenu', function (e) {
+    const chip = e.target.closest ? e.target.closest('.chip') : null;
+    if (!chip) return;
+    const id = chip.dataset.preset;
+    e.preventDefault();
+    const c = custom.filter(function (x) { return x.id === id; })[0];
+    if (c) {
+      custom = custom.filter(function (x) { return x.id !== id; });
+      if (state.preset === id) state.preset = 'standard';
+      save(); renderAll();
+      toast('已删除自定义预设「' + c.name + '」', 'warn');
+      return;
+    }
+    const b = BUILTIN.filter(function (x) { return x.id === id; })[0];
+    if (!b) return;
+    if (state.hidden.indexOf(id) < 0) state.hidden.push(id);
+    if (state.preset === id) state.preset = '';
+    save(); renderAll();
+    toast('已删除内置预设「' + b.name + '」，可点「恢复默认」找回', 'warn');
+  });
+
+  elRestore.onclick = function () {
+    if (!state.hidden.length) { toast('内置预设都在呢，不用恢复喵~', 'info'); return; }
+    const n = state.hidden.length;
+    state.hidden = [];
+    save(); renderAll();
+    toast('已恢复 ' + n + ' 个内置预设', 'ok');
+  };
+
+  elAutoSw.addEventListener('change', function () {
+    state.auto = elAutoSw.checked;
+    save();
+    renderAuto();
+    beep(state.auto ? 680 : 340, .1, 'triangle');
+    toast(state.auto
+      ? '已开启定时：' + state.sunset + ' 切夜间，' + state.sunrise + ' 恢复'
+      : '已关闭定时自动切换', state.auto ? 'ok' : 'warn');
+  });
+
+  elSunset.addEventListener('change', function () {
+    if (!/^\d{2}:\d{2}$/.test(elSunset.value)) { elSunset.value = state.sunset; return; }
+    state.sunset = elSunset.value;
+    save(); renderAuto();
+    toast('日落时间已设为 ' + state.sunset, 'ok');
+  });
+
+  elSunrise.addEventListener('change', function () {
+    if (!/^\d{2}:\d{2}$/.test(elSunrise.value)) { elSunrise.value = state.sunrise; return; }
+    state.sunrise = elSunrise.value;
+    save(); renderAuto();
+    toast('日出时间已设为 ' + state.sunrise, 'ok');
+  });
+
+  /* ---------------- 随时间自动变化：时钟 + 切换倒计时 + 自动切换 ---------------- */
+  const toSec = function (hm) { return +hm.slice(0, 2) * 3600 + +hm.slice(3) * 60; };
+  const nowSec = function () { const d = new Date(); return d.getHours() * 3600 + d.getMinutes() * 60 + d.getSeconds(); };
+
+  function tick() {
+    elClock.textContent = fmtClock();
+    const n = nowSec();
+    const ss = toSec(state.sunset), sr = toSec(state.sunrise);
+
+    // 判断当前应处于哪个阶段（夜间 = 日落之后 或 日出之前）
+    const shouldNight = ss >= sr ? (n >= ss || n < sr) : (n >= ss && n < sr);
+
+    // 倒计时到下一次边界
+    let target, label;
+    if (shouldNight) {
+      target = sr > n ? sr : sr + 86400;
+      label = '距离日出恢复还有';
+    } else {
+      target = ss > n ? ss : ss + 86400;
+      label = '距离日落切夜间还有';
+    }
+    const left = target - n;
+    elNextLabel.textContent = state.auto ? label : '定时未开启 · 距离日落';
+    elNextCd.textContent = fmtTime(left);
+
+    if (state.auto && shouldNight !== nightOn) {
+      nightOn = shouldNight;
+      const p = BUILTIN.filter(function (x) { return x.id === (shouldNight ? 'night' : 'standard'); })[0];
+      state.bright = p.bright; state.temp = p.temp; state.preset = p.id;
+      applyVisual(); renderPresets(); comfort(); renderAuto(); save();
+      PL.chime();
+      PL.notify(shouldNight ? '🌙 已自动切换夜间模式' : '☀️ 已自动恢复白天模式',
+        '亮度 ' + state.bright + '% · 色温 ' + state.temp + 'K');
+      toast(shouldNight ? '日落啦，已自动开启夜间模式 🌙' : '天亮啦，已恢复标准模式 ☀️', 'ok', 3400);
+    } else {
+      renderAuto();
+    }
+    if (!state.auto) nightOn = shouldNight;
+  }
+  setInterval(tick, 1000);
+
+  /* ---------------- 初始化 ---------------- */
+  nightOn = state.auto && (function () {
+    const n = nowSec(), ss = toSec(state.sunset), sr = toSec(state.sunrise);
+    return ss >= sr ? (n >= ss || n < sr) : (n >= ss && n < sr);
+  })();
+  syncAutoInputs();
+  renderAll();
+  tick();
+  save();
+
+  /* ============================================================
+     桌面精简形态：亮度滑块 / 色温滑块 / 当前参数
+     ============================================================ */
+  const cwf = PL.cwf;
+
+  /** 色温数值 → 视觉色（暖→冷），用于预览小圆点 */
+  function tempColor(k) {
+    const t = clamp((k - 2000) / 6000, 0, 1);   // 0=最暖 1=最冷
+    const r = Math.round(255 - t * 175);
+    const g = Math.round(180 + t * 40);
+    const b = Math.round(110 + t * 145);
+    return 'rgb(' + r + ',' + g + ',' + b + ')';
+  }
+  /** 数值徽标：实心底 + 反色文字，保证任何底色上都读得清 */
+  function pill(v, isBright) {
+    const bg = isBright
+      ? 'color-mix(in srgb, var(--accent) ' + v + '%, var(--surface))'
+      : tempColor(v);
+    return 'background:' + bg + ';color:var(--surface);padding:2px 7px;border-radius:99px;font-weight:700';
+  }
+
+  /** 精简组件里可拖动的滑块（亮度或色温） */
+  function sliderFmt(o) {
+    const isBright = o.target !== 'temp';
+    const val = isBright ? state.bright : state.temp;
+    const min = isBright ? 10 : 2000;
+    const max = isBright ? 100 : 8000;
+    const step = isBright ? 1 : 100;
+    const icon = isBright ? '🔆' : '🌡️';
+    const label = isBright ? '亮度' : '色温';
+    const show = isBright ? val + '%' : val + 'K';
+
+    return {
+      cls: 'cw-slider',
+      html: '<div class="hd"><span class="ic">' + icon + '</span>' +
+            '<span class="nm">' + label + '</span>' +
+            '<span class="v" style="' + pill(val, isBright) + '">' + show + '</span></div>' +
+            '<input type="range" min="' + min + '" max="' + max + '" step="' + step + '" value="' + val + '">',
+      onMount: (face) => {
+        const inp = face.querySelector('input[type="range"]');
+        if (!inp) return;
+        inp.addEventListener('click', e => e.stopPropagation());
+        inp.addEventListener('input', e => {
+          const v = Number(e.target.value);
+          if (isBright) state.bright = v; else state.temp = v;
+          const lab = face.querySelector('.v');
+          if (lab) {
+            lab.textContent = isBright ? v + '%' : v + 'K';
+            lab.style.cssText = pill(v, isBright);
+          }
+          if (typeof renderAll === 'function') renderAll();
+          save();
+        });
+        inp.addEventListener('change', e => {
+          const v = Number(e.target.value);
+          beep(isBright ? 400 + v * 6 : 900 - (v - 2000) / 12, .07);
+          toast(label + ' → ' + (isBright ? v + '%' : v + 'K'), 'ok');
+        });
+      },
+    };
+  }
+
+  PL.compact({
+    id: 'brightness-temp',
+    name: '亮度色温',
+    icon: '🔆',
+    defFormat: 'slider',
+    defSize: 'wide',
+    data: () => ({ state, nightOn }),
+    formats: [
+      {
+        id: 'slider',
+        name: '调节滑块',
+        icon: '🎚️',
+        options: [
+          { key: 'target', type: 'select', label: '调节哪项', def: 'bright',
+            options: [
+              { value: 'bright', label: '亮度' },
+              { value: 'temp', label: '色温' },
+            ] },
+        ],
+        render: (o) => sliderFmt(o),
+      },
+      {
+        id: 'stat',
+        name: '当前参数',
+        icon: '📊',
+        options: [
+          { key: 'which', type: 'select', label: '显示哪项', def: 'bright',
+            options: [
+              { value: 'bright', label: '亮度' },
+              { value: 'temp', label: '色温' },
+            ] },
+        ],
+        render: (o) => {
+          const isBright = o.which !== 'temp';
+          return cwf.stat({
+            value: isBright ? state.bright : state.temp,
+            unit: isBright ? '%' : 'K',
+            name: (isBright ? '屏幕亮度' : '色温') + (nightOn ? ' · 夜间' : ''),
+          });
+        },
+      },
+      {
+        id: 'list',
+        name: '预设方案',
+        icon: '📋',
+        options: [
+          { key: 'max', type: 'num', label: '显示条数', def: 3, min: 2, max: 5 },
+        ],
+        render: (o) => {
+          const rows = BUILTIN.filter(p => state.hidden.indexOf(p.id) < 0)
+            .map(p => ({
+              icon: p.icon || '🎨',
+              text: p.name,
+              right: p.id === state.preset ? '当前' : '',
+            }));
+          return cwf.list({ rows, max: Number(o.max) || 3 });
+        },
+      },
+    ],
+  });
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,469 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>习惯打卡 · 连续坚持</title>
+<link rel="stylesheet" href="../assets/theme.css">
+<link rel="stylesheet" href="../assets/compact.css">
+<style>
+  :root { --accent: #f43f5e; --accent-2: #fb7185; }
+
+  .habit { display: flex; flex-direction: column; gap: 9px; background: var(--surface-2);
+           border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 10px 11px;
+           animation: item-in .3s ease both; transition: border-color .18s, transform .18s; }
+  .habit:hover { border-color: color-mix(in srgb, var(--accent) 34%, transparent); transform: translateX(2px); }
+  .habit .top { display: flex; align-items: center; gap: 9px; }
+  .habit .av { width: 30px; height: 30px; border-radius: 9px; display: grid; place-items: center;
+               font-size: 15px; background: var(--accent-soft); flex: none; }
+  .habit .nm { font-size: 12.5px; font-weight: 650; }
+  .habit .sub { font-size: 10.5px; color: var(--muted); }
+
+  .hgrid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 5px; }
+  .hcol { display: flex; flex-direction: column; align-items: center; gap: 3px; }
+  .hcol .wd { font-size: 9.5px; color: var(--muted); }
+  .hcol.now .wd { color: var(--accent); font-weight: 700; }
+  .hdot { width: 100%; height: 28px; border-radius: 8px; padding: 0; cursor: pointer;
+          border: 1px solid var(--border); background: color-mix(in srgb, var(--muted) 14%, transparent);
+          color: var(--muted); font-size: 12px; font-weight: 700;
+          display: grid; place-items: center;
+          transition: transform .14s, background .22s, color .22s, border-color .22s; }
+  .hdot:hover { transform: translateY(-2px); border-color: color-mix(in srgb, var(--accent) 48%, transparent); }
+  .hdot.on { background: linear-gradient(135deg, var(--accent), var(--accent-2)); color: #fff; border-color: transparent; }
+  .hdot.today { box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 42%, transparent); }
+  .flame { color: var(--accent); font-weight: 700; }
+  .addrow { display: flex; gap: 8px; }
+</style>
+</head>
+<body>
+<div class="win" style="--w:420px">
+  <header class="win-head">
+    <div class="lights"><i></i><i></i><i></i></div>
+    <div class="win-title"><span class="ico">🔥</span>习惯打卡<span class="win-sub">连续坚持</span></div>
+    <div class="spacer"></div>
+    <span class="badge mono" id="clock">--:--:--</span>
+  </header>
+
+  <div class="win-body">
+    <div class="card row between">
+      <div class="col" style="gap:3px">
+        <span class="small muted">今日完成</span>
+        <b id="todayText" style="font-size:15px">0 / 0 个习惯</b>
+        <span class="tiny muted" id="bestText">最长连续 0 天</span>
+      </div>
+      <div class="ring" id="ring" style="--size:104px;--thick:10px">
+        <div><b id="rate">0%</b><span>今日完成率</span></div>
+      </div>
+    </div>
+
+    <div class="stats">
+      <div class="card stat"><b id="hCount">0</b><span>习惯总数</span></div>
+      <div class="card stat"><b id="hDone">0/0</b><span>今日已打卡</span></div>
+      <div class="card stat"><b id="hWeek">0%</b><span>本周完成率</span></div>
+    </div>
+
+    <div class="row between">
+      <span class="small bold">最近 7 天 · 点一下就能补打卡</span>
+      <button class="btn sm" id="checkAll">全部打卡</button>
+    </div>
+
+    <div class="list" id="habits"></div>
+
+    <!-- 跨插件联动：读取 #02 喝水提醒的今日数据 -->
+    <div class="card link" id="linkWater" hidden>
+      <div class="row between">
+        <span class="small bold">💧 联动 · 喝水提醒（#02）</span>
+        <span class="badge" id="linkWaterBadge">—</span>
+      </div>
+      <div class="bar thin"><i id="linkWaterBar" style="width:0%"></i></div>
+      <div class="tiny muted" id="linkWaterText">还没有喝水数据，去 #02 记一杯吧喵~</div>
+    </div>
+
+    <div class="sep"></div>
+
+    <div class="row between">
+      <span class="small bold">新增自定义习惯</span>
+      <span class="tiny muted">回车即可添加</span>
+    </div>
+    <div class="addrow">
+      <input type="text" id="newName" placeholder="例如：背 20 个单词" maxlength="18">
+      <button class="btn primary" id="add">＋ 添加</button>
+    </div>
+    <div class="chips" id="icons">
+      <button class="chip on" data-icon="⭐">⭐</button>
+      <button class="chip" data-icon="💧">💧</button>
+      <button class="chip" data-icon="🏃">🏃</button>
+      <button class="chip" data-icon="📖">📖</button>
+      <button class="chip" data-icon="🧘">🧘</button>
+      <button class="chip" data-icon="🎸">🎸</button>
+      <button class="chip" data-icon="🥗">🥗</button>
+    </div>
+  </div>
+
+  <footer class="win-foot">
+    <span class="dot live"></span><span id="leftToday">今天还剩 --</span>
+    <div class="spacer" style="flex:1"></div>
+    <span class="tiny">预览版 · 数据存本地</span>
+  </footer>
+</div>
+
+<script src="../assets/pl.js"></script>
+<script src="../assets/compact.js"></script>
+<script>
+(function () {
+  const { $, $$, toast, store, pad } = PL;
+
+  const WD = ['日', '一', '二', '三', '四', '五', '六'];
+  const DEFAULT = [
+    { id: 1, name: '喝水 8 杯', icon: '💧', log: {} },
+    { id: 2, name: '运动 30 分钟', icon: '🏃', log: {} },
+    { id: 3, name: '阅读 20 页', icon: '📖', log: {} },
+    { id: 4, name: '早睡 23:00', icon: '🌙', log: {} },
+    { id: 5, name: '冥想 10 分钟', icon: '🧘', log: {} }
+  ];
+
+  let habits = store.get('habits', DEFAULT);
+  let best = store.get('best', {});       // { 习惯id: 历史最长连续天数 }
+  let pendingDel = 0;                     // 待二次确认删除的习惯 id
+  let pickIcon = '⭐';
+  let lastDay = '';
+
+  /* ---------- 日期小工具 ---------- */
+  const dstr = d => d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
+  function shift(n) { const d = new Date(); d.setDate(d.getDate() + n); d.setHours(0, 0, 0, 0); return d; }
+  const isOn = (h, key) => !!(h.log && h.log[key]);
+  const save = () => { store.set('habits', habits); store.set('best', best); };
+
+  /* ============================================================
+     跨插件联动：读取 #02 喝水提醒的今日数据
+     ------------------------------------------------------------
+     PL.store 用统一前缀 'pl:' 且共享同源 localStorage，因此插件之间
+     可以直接读对方的键（#02 用的是 goal / logs-<日期> / streak）。
+
+     设计原则：
+       - 只读，不写：这里绝不修改 #02 的数据，避免两个插件互相覆盖。
+       - 可缺失：#02 从未打开过、或数据格式变了，都要安全降级为空，
+         不能让本插件报错或显示 NaN。
+     ============================================================ */
+  const LINK = {
+    /**
+     * 注意：这里必须写 PL.today()，不能写 today()。
+     * 本插件顶部解构的是 { $, $$, toast, store, pad }，**没有 today**，
+     * 直接写 today() 会抛 ReferenceError，被 catch 吞掉后表现为「永远没数据」。
+     */
+    hasWaterData() {
+      try {
+        const logs = store.get('logs-' + PL.today(), null);
+        return logs !== null;
+      } catch (e) { return false; }
+    },
+    /** 今日喝水杯数 */
+    waterCups() {
+      try {
+        const logs = store.get('logs-' + PL.today(), []);
+        return Array.isArray(logs) ? logs.length : 0;
+      } catch (e) { return 0; }
+    },
+    /** 今日目标杯数 */
+    waterGoal() {
+      try {
+        const g = Number(store.get('goal', 8));
+        return (isFinite(g) && g > 0) ? g : 8;
+      } catch (e) { return 8; }
+    },
+    /** 今日喝水是否达标 */
+    waterDone() { return LINK.waterCups() >= LINK.waterGoal(); },
+  };
+
+  /** 连续天数：今天打了就从今天数，否则从昨天往前数 */
+  function streak(h) {
+    let n = 0, i = isOn(h, dstr(shift(0))) ? 0 : 1;
+    while (n < 500 && isOn(h, dstr(shift(-i)))) { n++; i++; }
+    return n;
+  }
+
+  /* ---------- 渲染 ---------- */
+  function render() {
+    const days = [];
+    for (let i = -6; i <= 0; i++) {
+      const d = shift(i);
+      days.push({ key: dstr(d), wd: WD[d.getDay()], now: i === 0 });
+    }
+    const todayKey = days[6].key;
+
+    const doneToday = habits.filter(h => isOn(h, todayKey)).length;
+    const rate = habits.length ? Math.round(doneToday / habits.length * 100) : 0;
+    let hit = 0;
+    habits.forEach(h => days.forEach(d => { if (isOn(h, d.key)) hit++; }));
+    const weekRate = habits.length ? Math.round(hit / (habits.length * 7) * 100) : 0;
+    const bestStreak = habits.reduce((m, h) => Math.max(m, streak(h), best[h.id] || 0), 0);
+
+    $('#ring').style.setProperty('--p', rate);
+    $('#rate').textContent = rate + '%';
+    $('#todayText').textContent = doneToday + ' / ' + habits.length + ' 个习惯';
+    $('#bestText').textContent = '最长连续 ' + bestStreak + ' 天';
+    $('#hCount').textContent = habits.length;
+    $('#hDone').textContent = doneToday + '/' + habits.length;
+    $('#hWeek').textContent = weekRate + '%';
+
+    /* 联动 #02 喝水提醒：只读对方数据，缺失时安全降级 */
+    const lwBox = $('#linkWater');
+    if (lwBox) {
+      // 只在 #02 真的有数据时才显示这一块，避免空占界面
+      if (LINK.hasWaterData()) {
+        lwBox.hidden = false;
+        const cups = LINK.waterCups(), goal = LINK.waterGoal();
+        const pct = Math.min(100, goal ? Math.round(cups / goal * 100) : 0);
+        $('#linkWaterBar').style.width = pct + '%';
+        $('#linkWaterBadge').textContent = cups + ' / ' + goal + ' 杯';
+        $('#linkWaterBadge').className = 'badge ' + (LINK.waterDone() ? 'ok' : 'warn');
+        $('#linkWaterText').textContent = LINK.waterDone()
+          ? '今日喝水已达标，做得好喵~ (｡･ω･｡)'
+          : '今日还差 ' + Math.max(0, goal - cups) + ' 杯达标';
+      } else {
+        lwBox.hidden = true;
+      }
+    }
+
+    const box = $('#habits');
+    box.innerHTML = '';
+    if (!habits.length) {
+      box.innerHTML = '<div class="empty">还没有习惯喵~ 在下面添加一个吧 (｡･ω･｡)</div>';
+      return;
+    }
+
+    habits.forEach(h => {
+      const st = streak(h);
+      if (st > (best[h.id] || 0)) best[h.id] = st;   // 顺手刷新最长记录
+
+      const cols = days.map(d => {
+        const on = isOn(h, d.key);
+        return '<div class="hcol ' + (d.now ? 'now' : '') + '">' +
+          '<button class="hdot ' + (on ? 'on' : '') + (d.now ? ' today' : '') + '"' +
+          ' data-h="' + h.id + '" data-d="' + d.key + '" title="' + d.key + '">' + (on ? '✓' : '') + '</button>' +
+          '<span class="wd">' + d.wd + '</span></div>';
+      }).join('');
+
+      const actions = pendingDel === h.id
+        ? '<button class="btn sm danger" data-del="' + h.id + '">确认删除</button>' +
+          '<button class="btn sm ghost" data-cancel="1">取消</button>'
+        : '<button class="btn sm ghost" data-ask="' + h.id + '" title="删除习惯">🗑</button>';
+
+      const el = document.createElement('div');
+      el.className = 'habit';
+      el.innerHTML =
+        '<div class="top">' +
+          '<div class="av">' + h.icon + '</div>' +
+          '<div class="grow"><div class="nm">' + h.name + '</div>' +
+          '<div class="sub">连续 <span class="flame">🔥 ' + st + ' 天</span> · 最长 ' + (best[h.id] || st) + ' 天</div></div>' +
+          actions +
+        '</div>' +
+        '<div class="hgrid">' + cols + '</div>';
+      box.appendChild(el);
+    });
+
+    /* 绑定本行内的按钮（重建 DOM 后重新挂载） */
+    $$('[data-h]', box).forEach(b => b.onclick = () => toggle(+b.dataset.h, b.dataset.d));
+    $$('[data-ask]', box).forEach(b => b.onclick = () => {
+      pendingDel = +b.dataset.ask;
+      render();
+      toast('再点一次「确认删除」就会删掉它哦', 'warn');
+    });
+    $$('[data-del]', box).forEach(b => b.onclick = () => remove(+b.dataset.del));
+    $$('[data-cancel]', box).forEach(b => b.onclick = () => { pendingDel = 0; render(); });
+
+    save();
+  }
+
+  /* ---------- 交互 ---------- */
+  function toggle(id, key) {
+    const h = habits.find(x => x.id === id);
+    if (!h) return;
+    h.log = h.log || {};
+    if (h.log[key]) {
+      delete h.log[key];
+      toast('已取消「' + h.name + '」' + key + ' 的打卡', 'warn');
+    } else {
+      h.log[key] = true;
+      PL.beep(780, .1);
+      toast('打卡成功：' + h.name + ' 🔥 连续 ' + streak(h) + ' 天', 'ok');
+    }
+    save();
+    render();
+  }
+
+  function remove(id) {
+    const h = habits.find(x => x.id === id);
+    habits = habits.filter(x => x.id !== id);
+    pendingDel = 0;
+    save();
+    render();
+    toast('已删除「' + (h ? h.name : '') + '」', 'danger');
+  }
+
+  function checkAll() {
+    const key = dstr(shift(0));
+    const todo = habits.filter(h => !isOn(h, key));
+    if (!habits.length) { toast('先添加一个习惯吧喵~', 'warn'); return; }
+    if (!todo.length) { toast('今天已经全部打卡啦，超棒 (๑•̀ㅂ•́)و', 'ok'); return; }
+    todo.forEach(h => { h.log = h.log || {}; h.log[key] = true; });
+    PL.chime();
+    save();
+    render();
+    toast('已为 ' + todo.length + ' 个习惯打卡', 'ok');
+  }
+
+  $('#checkAll').onclick = checkAll;
+  $('#add').onclick = () => {
+    const name = String($('#newName').value || '').trim();
+    if (!name) { toast('先给它起个名字吧喵~', 'warn'); return; }
+    if (habits.some(h => h.name === name)) { toast('已经有同名习惯啦', 'warn'); return; }
+    habits.push({ id: Date.now(), name: name, icon: pickIcon, log: {} });
+    $('#newName').value = '';
+    save();
+    render();
+    toast('已新增习惯「' + name + '」', 'ok');
+  };
+  $('#newName').addEventListener('keydown', e => { if (e.key === 'Enter') $('#add').click(); });
+
+  $$('#icons .chip').forEach(c => c.onclick = () => {
+    pickIcon = c.dataset.icon || '⭐';
+    $$('#icons .chip').forEach(x => x.classList.toggle('on', x === c));
+  });
+
+  /* ---------- 每秒走动的时钟 + 今日剩余时间 ---------- */
+  function tick() {
+    const d = new Date();
+    $('#clock').textContent = pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
+    const end = new Date(d.getTime());
+    end.setHours(24, 0, 0, 0);
+    const left = Math.max(0, Math.floor((end - d) / 1000));
+    $('#leftToday').textContent = '今天还剩 ' + Math.floor(left / 3600) + ' 小时 ' + pad(Math.floor(left % 3600 / 60)) + ' 分';
+    const key = dstr(d);
+    if (key !== lastDay) { lastDay = key; render(); }   // 跨天自动刷新点阵
+
+    // 精简组件跟随每秒刷新（跨天时打卡点阵也会同步）
+    PL.compactRefreshAll();
+  }
+  setInterval(tick, 1000);
+
+  render();
+  tick();
+
+  /* ============================================================
+     桌面精简形态：今日完成率 / 习惯列表 / 连续天数
+     ============================================================ */
+  const cwf = PL.cwf;
+
+  /** 今日打卡概况 */
+  function cwToday() {
+    const key = dstr(shift(0));
+    const done = habits.filter(h => isOn(h, key)).length;
+    return {
+      key: key,
+      done: done,
+      total: habits.length,
+      pct: habits.length ? Math.round(done / habits.length * 100) : 0,
+    };
+  }
+
+  /** 所有习惯里最长的连续天数（含历史最长记录） */
+  function cwBestStreak() {
+    return habits.reduce((m, h) => Math.max(m, streak(h), best[h.id] || 0), 0);
+  }
+
+  PL.compact({
+    id: 'habit-tracker',
+    name: '习惯打卡',
+    icon: '🔥',
+    defFormat: 'ring',
+    defSize: 'square',
+    data: () => ({ habits: habits, today: cwToday(), bestStreak: cwBestStreak(), water: {
+      cups: LINK.waterCups(), goal: LINK.waterGoal(), done: LINK.waterDone(), has: LINK.hasWaterData(),
+    } }),
+    formats: [
+      {
+        id: 'ring',
+        name: '今日完成率',
+        icon: '⭕',
+        options: [
+          { key: 'label', type: 'text', label: '环下文字', def: '今日完成' },
+        ],
+        render: (o) => {
+          const t = cwToday();
+          return cwf.ring({ pct: t.pct, label: (o.label || '今日完成') + ' ' + t.done + '/' + t.total });
+        },
+      },
+      {
+        id: 'water',
+        name: '联动喝水',
+        icon: '💧',
+        options: [
+          { key: 'showPct', type: 'bool', label: '显示百分比', def: true },
+        ],
+        render: () => {
+          // 联动 #02 喝水提醒：没数据时给占位，不显示 NaN
+          if (!LINK.hasWaterData()) {
+            return cwf.stat({ value: 0, unit: '杯', name: '还没喝水记录' });
+          }
+          const cups = LINK.waterCups(), goal = LINK.waterGoal();
+          const pct = Math.min(100, goal ? Math.round(cups / goal * 100) : 0);
+          return cwf.ring({
+            pct: pct,
+            label: (LINK.waterDone() ? '喝水达标 ' : '还差 ') +
+                   (LINK.waterDone() ? '' : Math.max(0, goal - cups) + ' 杯 '),
+          });
+        },
+      },
+      {
+        id: 'list',
+        name: '习惯列表',
+        icon: '📋',
+        options: [
+          { key: 'max', type: 'num', label: '显示条数', def: 3, min: 2, max: 5 },
+          { key: 'sort', type: 'select', label: '排序', def: 'order',
+            options: [
+              { value: 'order', label: '添加顺序' },
+              { value: 'streak', label: '按连续天数' },
+            ] },
+        ],
+        render: (o) => {
+          const key = dstr(shift(0));
+          const arr = o.sort === 'streak'
+            ? habits.slice().sort((a, b) => streak(b) - streak(a))
+            : habits.slice();
+          const rows = arr.map(h => ({
+            icon: isOn(h, key) ? '✅' : h.icon,
+            text: h.name,
+            right: '🔥 ' + streak(h) + ' 天',
+          }));
+          if (!rows.length) rows.push({ icon: '⭐', text: '还没有习惯喵~', right: '' });
+          return cwf.list({ rows, max: Number(o.max) || 3 });
+        },
+      },
+      {
+        id: 'stat',
+        name: '连续天数',
+        icon: '🔥',
+        options: [
+          { key: 'which', type: 'select', label: '统计哪个', def: 'best',
+            options: [
+              { value: 'best', label: '最长连续' },
+              { value: 'first', label: '第一个习惯' },
+            ] },
+          { key: 'label', type: 'text', label: '标签文字', def: '' },
+        ],
+        render: (o) => {
+          if (o.which === 'first' && habits.length) {
+            const h = habits[0];
+            return cwf.stat({ value: streak(h), unit: '天', name: o.label || h.name });
+          }
+          return cwf.stat({ value: cwBestStreak(), unit: '天', name: o.label || '最长连续' });
+        },
+      },
+    ],
+  });
+})();
+</script>
+</body>
+</html>

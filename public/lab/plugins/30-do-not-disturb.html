@@ -1,0 +1,472 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>勿扰模式 · 专注屏蔽</title>
+<link rel="stylesheet" href="../assets/theme.css">
+<link rel="stylesheet" href="../assets/compact.css">
+<style>
+  :root { --accent: #7c3aed; --accent-2: #a78bfa; }
+
+  /* 开启后整个窗口切换为夜间风格（只覆盖窗口作用域内的变量） */
+  .win {
+    transition: background .5s ease, border-color .5s ease, box-shadow .5s ease;
+  }
+  .win.night {
+    --surface: #101223;
+    --surface-2: #191d33;
+    --text: #e9ecfb;
+    --muted: #8f97b8;
+    --border: rgba(255, 255, 255, .1);
+    --accent: #8b5cf6;
+    --accent-2: #c4b5fd;
+    background: color-mix(in srgb, var(--surface) 94%, transparent);
+    box-shadow: 0 24px 60px -22px rgba(10, 6, 40, .85), 0 0 0 1px rgba(139, 92, 246, .18);
+  }
+  .win.night .win-head { background: linear-gradient(180deg, rgba(139, 92, 246, .18), transparent); }
+  .win.night::after {
+    content: ""; position: absolute; inset: 0; pointer-events: none; opacity: .5;
+    background-image: radial-gradient(rgba(255,255,255,.55) 1px, transparent 1px),
+                      radial-gradient(rgba(196,181,253,.5) 1px, transparent 1px);
+    background-size: 90px 74px, 130px 110px; background-position: 8px 12px, 40px 30px;
+    animation: twinkle 5s ease-in-out infinite;
+  }
+  @keyframes twinkle { 50% { opacity: .22; } }
+
+  /* 大号开关 */
+  .bigswitch { width: 100%; border: 1px solid var(--border); border-radius: var(--radius-sm); cursor: pointer;
+    background: var(--surface-2); padding: 16px 14px; display: flex; align-items: center; gap: 14px;
+    font: inherit; color: var(--text); transition: .3s; position: relative; z-index: 1; }
+  .bigswitch:hover { border-color: color-mix(in srgb, var(--accent) 46%, transparent); }
+  .bigswitch .ic { width: 54px; height: 54px; border-radius: 50%; display: grid; place-items: center; font-size: 26px;
+    background: color-mix(in srgb, var(--muted) 20%, transparent); transition: .35s; flex: none; }
+  .bigswitch.on { background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 24%, var(--surface-2)), var(--surface-2));
+    border-color: color-mix(in srgb, var(--accent) 55%, transparent); }
+  .bigswitch.on .ic { background: linear-gradient(135deg, var(--accent), var(--accent-2));
+    box-shadow: 0 0 0 8px color-mix(in srgb, var(--accent) 18%, transparent); transform: rotate(-8deg); }
+  .bigswitch b { font-size: 15px; font-weight: 700; display: block; letter-spacing: -.2px; }
+  .bigswitch .st { font-size: 11px; color: var(--muted); }
+  .bigswitch .knob { width: 46px; height: 26px; border-radius: 99px; flex: none; position: relative;
+    background: color-mix(in srgb, var(--muted) 38%, transparent); transition: background .25s; }
+  .bigswitch .knob::after { content: ""; position: absolute; top: 3px; left: 3px; width: 20px; height: 20px;
+    border-radius: 50%; background: #fff; box-shadow: 0 1px 4px rgba(0,0,0,.35);
+    transition: transform .26s cubic-bezier(.3,1.4,.5,1); }
+  .bigswitch.on .knob { background: var(--accent); }
+  .bigswitch.on .knob::after { transform: translateX(20px); }
+
+  .cd { font-family: var(--mono); font-size: 27px; font-weight: 700; letter-spacing: -.5px; }
+  /* 星点装饰层压在最底下，窗口各部分浮在它之上 */
+  .win.night::after { z-index: 0; }
+  .win-head, .win-body, .win-foot { position: relative; z-index: 1; }
+  .exrow { display: flex; align-items: center; gap: 9px; font-size: 12px; }
+  .exrow .grow { font-size: 12px; font-weight: 600; }
+  .exrow .s { font-size: 10.5px; color: var(--muted); font-weight: 400; }
+  .moons { position: absolute; right: 14px; top: 12px; font-size: 15px; opacity: 0; transition: opacity .4s; }
+  .win.night .moons { opacity: .85; }
+</style>
+</head>
+<body>
+<div class="win" id="win" style="--w:400px">
+  <header class="win-head">
+    <div class="lights"><i></i><i></i><i></i></div>
+    <div class="win-title"><span class="ico">🌙</span>勿扰模式<span class="win-sub">专注屏蔽</span></div>
+    <div class="spacer"></div>
+    <span class="badge" id="badge">已关闭</span>
+    <span class="moons">✨</span>
+  </header>
+
+  <div class="win-body">
+    <button class="bigswitch" id="toggle">
+      <span class="ic" id="bigIcon">☀️</span>
+      <span class="grow" style="text-align:left">
+        <b id="bigText">勿扰已关闭</b>
+        <span class="st" id="bigSub">通知会正常弹出</span>
+      </span>
+      <span class="knob"></span>
+    </button>
+
+    <div class="card row between">
+      <div class="col" style="gap:2px">
+        <span class="small muted">剩余时间</span>
+        <span class="cd" id="cd">--:--</span>
+        <span class="tiny muted" id="endAt">未开启</span>
+      </div>
+      <div class="ring" id="ring" style="--size:92px;--thick:9px">
+        <div><b id="ringTxt">0</b><span>今日拦截</span></div>
+      </div>
+    </div>
+
+    <div class="row between">
+      <span class="small bold">持续时长</span>
+      <span class="tiny muted" id="durText">开启后生效</span>
+    </div>
+    <div class="chips" id="durs">
+      <button class="chip on" data-min="30">30 分钟</button>
+      <button class="chip" data-min="60">60 分钟</button>
+      <button class="chip" data-min="120">120 分钟</button>
+      <button class="chip" data-min="-1">直到明天</button>
+    </div>
+
+    <div class="card col">
+      <span class="small bold">例外设置</span>
+      <div class="exrow">
+        <span class="grow">允许联系人来电<span class="s"> · 收藏联系人依然可以打通</span></span>
+        <label class="switch"><input type="checkbox" id="exContacts" checked><i></i></label>
+      </div>
+      <div class="sep"></div>
+      <div class="exrow">
+        <span class="grow">重复来电<span class="s"> · 同一号码 3 分钟内再拨可穿透</span></span>
+        <label class="switch"><input type="checkbox" id="exRepeat" checked><i></i></label>
+      </div>
+      <div class="sep"></div>
+      <div class="exrow">
+        <span class="grow">闹钟与计时器<span class="s"> · 始终允许响铃</span></span>
+        <label class="switch"><input type="checkbox" id="exAlarm"><i></i></label>
+      </div>
+    </div>
+
+    <div class="card col">
+      <span class="small bold">自动规则</span>
+      <div class="exrow">
+        <span class="grow">会议中自动开启<span class="s"> · 检测到日历会议时</span></span>
+        <label class="switch"><input type="checkbox" id="autoMeet"><i></i></label>
+      </div>
+      <div class="sep"></div>
+      <div class="exrow">
+        <span class="grow">全屏时自动开启<span class="s"> · 演示 / 游戏 / 观影</span></span>
+        <label class="switch"><input type="checkbox" id="autoFull"><i></i></label>
+      </div>
+      <div class="btns">
+        <button class="btn sm grow" id="simMeet">📅 模拟进入会议</button>
+        <button class="btn sm grow" id="simFull">🖥 模拟进入全屏</button>
+      </div>
+    </div>
+
+    <div class="row between">
+      <span class="small bold">已拦截的通知</span>
+      <button class="btn sm ghost" id="clear">清空</button>
+    </div>
+    <div class="list scroll" id="blocked" style="--scroll-h:130px"></div>
+
+    <div class="btns">
+      <button class="btn grow" id="simNotify">🔔 模拟一条通知</button>
+      <button class="btn ghost" id="reset">↺ 重置统计</button>
+    </div>
+  </div>
+
+  <footer class="win-foot">
+    <span class="dot" id="live"></span><span id="foot">通知畅通，随时会响喵~</span>
+    <div class="spacer" style="flex:1"></div>
+    <span class="tiny">预览版 · 数据存本地</span>
+  </footer>
+</div>
+
+<script src="../assets/pl.js"></script>
+<script src="../assets/compact.js"></script>
+<script>
+(function () {
+  const { $, $$, toast, notify, beep, store, pad, today, pick } = PL;
+
+  const APPS = [
+    { icon: '💬', name: '聊天消息' }, { icon: '📧', name: '邮件' },
+    { icon: '📱', name: '社交动态' }, { icon: '🛒', name: '购物推送' },
+    { icon: '🎮', name: '游戏邀请' }, { icon: '📰', name: '新闻速递' }
+  ];
+  const TEXTS = ['给你发来一条新消息', '这是一条营销推送', '有人点赞了你的动态', '限时优惠最后 2 小时', '会议邀请已更新', '你的订阅有更新'];
+
+  let on = store.get('dnd-on', false);
+  let durMin = store.get('dnd-dur', 30);           // -1 = 直到明天
+  let endsAt = store.get('dnd-ends', 0);           // 结束时间戳
+  let blocked = store.get('dnd-blocked', []);      // [{ at, app, text }]
+  let dayCount = store.get('dnd-day', { d: today(), n: 0 });
+  let ex = store.get('dnd-ex', { contacts: true, repeat: true, alarm: false });
+  let auto = store.get('dnd-auto', { meet: false, full: false });
+  let lastTick = 0;
+
+  const save = () => {
+    store.set('dnd-on', on); store.set('dnd-dur', durMin); store.set('dnd-ends', endsAt);
+    store.set('dnd-blocked', blocked); store.set('dnd-day', dayCount);
+    store.set('dnd-ex', ex); store.set('dnd-auto', auto);
+  };
+
+  /** 计算本次勿扰的结束时间戳 */
+  function calcEnd() {
+    if (durMin === -1) {
+      const d = new Date();
+      d.setDate(d.getDate() + 1); d.setHours(7, 0, 0, 0);   // 直到明天早上 7 点
+      return d.getTime();
+    }
+    return Date.now() + durMin * 60000;
+  }
+  const endLabel = () => {
+    if (durMin === -1) return '明天 07:00 自动恢复';
+    return new Date(endsAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }) + ' 自动恢复';
+  };
+
+  /* ---------- 渲染 ---------- */
+  function render() {
+    const win = $('#win');
+    win.classList.toggle('night', on);
+    $('#toggle').classList.toggle('on', on);
+    $('#bigIcon').textContent = on ? '🌙' : '☀️';
+    $('#bigText').textContent = on ? '勿扰已开启' : '勿扰已关闭';
+    $('#bigSub').textContent = on ? '通知已静音 · ' + endLabel() : '通知会正常弹出';
+    $('#badge').textContent = on ? '勿扰中' : '已关闭';
+    $('#badge').className = 'badge' + (on ? ' ok' : '');
+    $('#live').classList.toggle('live', on);
+    $('#foot').textContent = on ? '勿扰中，安安静静做自己的事喵~' : '通知畅通，随时会响喵~';
+    $('#endAt').textContent = on ? endLabel() : '未开启';
+    $('#durText').textContent = on ? '已生效 · ' + (durMin === -1 ? '直到明天' : durMin + ' 分钟') : '开启后生效';
+
+    if (dayCount.d !== today()) { dayCount = { d: today(), n: 0 }; }
+    $('#ringTxt').textContent = dayCount.n;
+    $('#ring').style.setProperty('--p', Math.min(100, dayCount.n * 10));
+
+    $('#exContacts').checked = ex.contacts;
+    $('#exRepeat').checked = ex.repeat;
+    $('#exAlarm').checked = ex.alarm;
+    $('#autoMeet').checked = auto.meet;
+    $('#autoFull').checked = auto.full;
+    $$('#durs .chip').forEach(b => b.classList.toggle('on', Number(b.dataset.min) === durMin));
+
+    const box = $('#blocked');
+    box.innerHTML = '';
+    if (!blocked.length) {
+      box.innerHTML = '<div class="empty">还没有拦截记录喵~ 世界很安静 (｡･ω･｡)</div>';
+      return;
+    }
+    blocked.slice(0, 8).forEach(b => {
+      const el = document.createElement('div');
+      el.className = 'item';
+      el.innerHTML = '<div class="av">' + b.app.icon + '</div>' +
+        '<div class="grow"><div class="t">' + b.app.name + '</div>' +
+        '<div class="s">' + b.text + '</div></div>' +
+        '<span class="badge danger">已拦截</span>';
+      box.appendChild(el);
+    });
+  }
+
+  /* ---------- 开关 ---------- */
+  function setOn(next, silent) {
+    on = next;
+    if (on) {
+      endsAt = calcEnd();
+      if (!silent) { beep(520, .14); toast('勿扰已开启，' + endLabel(), 'ok'); }
+    } else {
+      endsAt = 0;
+      if (!silent) { beep(880, .12); toast('勿扰已关闭，通知恢复正常', 'info'); }
+    }
+    save();
+    render();
+  }
+
+  $('#toggle').onclick = () => setOn(!on);
+
+  $$('#durs .chip').forEach(b => b.onclick = () => {
+    durMin = Number(b.dataset.min);
+    if (on) endsAt = calcEnd();
+    save();
+    render();
+    toast('时长已设为「' + (durMin === -1 ? '直到明天' : durMin + ' 分钟') + '」' + (on ? '' : '（开启后生效）'), 'info');
+  });
+
+  /* 例外设置 */
+  const bindEx = (sel, key, label) => $(sel).onchange = e => {
+    ex[key] = e.target.checked;
+    save();
+    render();
+    toast((ex[key] ? '已允许：' : '已禁止：') + label, ex[key] ? 'ok' : 'warn');
+  };
+  bindEx('#exContacts', 'contacts', '联系人来电');
+  bindEx('#exRepeat', 'repeat', '重复来电');
+  bindEx('#exAlarm', 'alarm', '闹钟与计时器');
+
+  /* 自动规则 */
+  const bindAuto = (sel, key, label) => $(sel).onchange = e => {
+    auto[key] = e.target.checked;
+    save();
+    render();
+    toast('自动规则「' + label + '」已' + (auto[key] ? '开启' : '关闭'), auto[key] ? 'ok' : 'warn');
+  };
+  bindAuto('#autoMeet', 'meet', '会议中自动开启');
+  bindAuto('#autoFull', 'full', '全屏时自动开启');
+
+  $('#simMeet').onclick = () => {
+    if (!auto.meet) { toast('先打开「会议中自动开启」这条规则喵~', 'warn'); return; }
+    if (on) { toast('已经在勿扰模式中啦', 'info'); return; }
+    setOn(true, true);
+    notify('🌙 检测到会议开始', '已自动开启勿扰模式，' + endLabel());
+    toast('检测到会议，已自动开启勿扰', 'ok');
+  };
+  $('#simFull').onclick = () => {
+    if (!auto.full) { toast('先打开「全屏时自动开启」这条规则喵~', 'warn'); return; }
+    if (on) { toast('已经在勿扰模式中啦', 'info'); return; }
+    setOn(true, true);
+    notify('🌙 检测到全屏应用', '已自动开启勿扰模式');
+    toast('检测到全屏，已自动开启勿扰', 'ok');
+  };
+
+  /* ---------- 拦截记录 ---------- */
+  function addBlocked(app, text) {
+    if (dayCount.d !== today()) dayCount = { d: today(), n: 0 };
+    dayCount.n++;
+    blocked.unshift({ at: Date.now(), app: app, text: text });
+    blocked = blocked.slice(0, 30);
+    save();
+    render();
+  }
+
+  $('#simNotify').onclick = () => {
+    const app = pick(APPS), text = pick(TEXTS);
+    if (on) {
+      addBlocked(app, text);
+      toast('已拦截 ' + app.icon + ' ' + app.name + ' 的通知', 'warn');
+    } else {
+      notify(app.icon + ' ' + app.name, text);
+      toast('通知正常弹出（未开启勿扰）', 'info');
+    }
+  };
+
+  $('#clear').onclick = () => {
+    if (!blocked.length) { toast('拦截记录本来就是空的喵~', 'warn'); return; }
+    blocked = [];
+    save();
+    render();
+    toast('拦截记录已清空', 'danger');
+  };
+
+  $('#reset').onclick = () => {
+    dayCount = { d: today(), n: 0 };
+    blocked = [];
+    save();
+    render();
+    toast('今日拦截统计已重置', 'info');
+  };
+
+  /* ---------- 每秒：倒计时 + 结束自动恢复 + 模拟拦截 ---------- */
+  setInterval(() => {
+    // 精简组件需每秒刷新（含未开启时的状态），故放在提前 return 之前
+    PL.compactRefreshAll();
+    if (!on) return;
+    const left = Math.max(0, Math.floor((endsAt - Date.now()) / 1000));
+    $('#cd').textContent = pad(Math.floor(left / 3600)) + ':' + pad(Math.floor(left % 3600 / 60)) + ':' + pad(left % 60);
+
+    if (left <= 0) {
+      setOn(false, true);
+      PL.chime();
+      notify('🌙 勿扰模式已结束', '通知已恢复正常，欢迎回来喵~');
+      toast('勿扰时间到，已自动恢复通知', 'ok', 4000);
+      return;
+    }
+
+    /* 演示：勿扰期间平均每 12 秒拦下一条通知 */
+    const sec = Math.floor(Date.now() / 1000);
+    if (sec - lastTick >= 12) {
+      lastTick = sec;
+      addBlocked(pick(APPS), pick(TEXTS));
+    }
+  }, 1000);
+
+  /* ---------- 初始化 ---------- */
+  if (on && (!endsAt || endsAt <= Date.now())) { on = false; endsAt = 0; save(); }
+  if (on) {
+    const left = Math.floor((endsAt - Date.now()) / 1000);
+    $('#cd').textContent = pad(Math.floor(left / 3600)) + ':' + pad(Math.floor(left % 3600 / 60)) + ':' + pad(left % 60);
+  } else {
+    $('#cd').textContent = '--:--';
+  }
+  lastTick = Math.floor(Date.now() / 1000);
+  render();
+
+  /* ============================================================
+     桌面精简形态：勿扰开关 / 剩余时间 / 今日拦截数
+     ============================================================ */
+  const cwf = PL.cwf;
+
+  /** 剩余时间文本 */
+  function leftText() {
+    if (!on) return '未开启';
+    const s = Math.max(0, Math.floor((endsAt - Date.now()) / 1000));
+    if (s <= 0) return '即将结束';
+    const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60);
+    return h ? h + ' 小时 ' + m + ' 分' : m + ' 分';
+  }
+
+  PL.compact({
+    id: 'do-not-disturb',
+    name: '勿扰模式',
+    icon: '🌙',
+    defFormat: 'toggle',
+    defSize: 'square',
+    data: () => ({ on, endsAt, blocked, dayCount }),
+    formats: [
+      {
+        id: 'toggle',
+        name: '勿扰开关',
+        icon: '🌙',
+        options: [
+          { key: 'showState', type: 'bool', label: '显示状态文字', def: true },
+        ],
+        render: (o) => {
+          // 直接复用 cwf 之外的写法：toggle 需要自定义 cls，故手写
+          const out = {
+            cls: 'cw-toggle' + (on ? ' on' : ''),
+            html: '<div class="ic">' + (on ? '🌙' : '☀️') + '</div>' +
+                  (o.showState === false ? '' : '<div class="nm">' + (on ? '勿扰中' : '正常') + '</div>') +
+                  (o.showState === false ? '' : '<div class="st">' + leftText() + '</div>'),
+            wrapCls: on ? 'cw-on' : '',
+          };
+          // 点正面即切换勿扰（而非打开完整窗口）
+          out.onMount = (face) => {
+            face.style.cursor = 'pointer';
+            face.onclick = (e) => {
+              e.stopPropagation();
+              on = !on;
+              if (on) { endsAt = calcEnd(); }
+              else { endsAt = 0; }
+              save(); render();
+              PL.compactRefreshAll();
+              toast(on ? '已开启勿扰模式' : '已关闭勿扰模式', on ? 'ok' : 'info');
+              beep(on ? 660 : 440, .1);
+            };
+          };
+          return out;
+        },
+      },
+      {
+        id: 'clock',
+        name: '剩余时间',
+        icon: '⏳',
+        options: [
+          { key: 'showName', type: 'bool', label: '显示说明', def: true },
+        ],
+        render: (o) => {
+          if (!on) return cwf.clock({ time: '--:--', sec: '', name: '勿扰未开启' });
+          const s = Math.max(0, Math.floor((endsAt - Date.now()) / 1000));
+          const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), ss = s % 60;
+          return cwf.clock({
+            time: (h ? h + ':' + pad(m) : pad(m)) + ':' + pad(ss),
+            sec: '',
+            name: o.showName === false ? '' : '勿扰剩余',
+          });
+        },
+      },
+      {
+        id: 'stat',
+        name: '今日拦截',
+        icon: '🔢',
+        options: [
+          { key: 'label', type: 'text', label: '标签文字', def: '今日拦截' },
+        ],
+        render: (o) => {
+          const n = (dayCount && dayCount.d === today()) ? dayCount.n : 0;
+          return cwf.stat({ value: n, unit: '条', name: o.label || '今日拦截' });
+        },
+      },
+    ],
+  });
+})();
+</script>
+</body>
+</html>

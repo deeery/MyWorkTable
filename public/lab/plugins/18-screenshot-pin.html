@@ -1,0 +1,472 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>截图贴图 · 选区与贴图</title>
+<link rel="stylesheet" href="../assets/theme.css">
+<link rel="stylesheet" href="../assets/compact.css">
+<style>
+  :root { --accent: #ef4444; --accent-2: #f87171; }
+
+  /* ---------- 模拟屏幕 ---------- */
+  .screen {
+    position: relative; height: 214px; border-radius: 12px; overflow: hidden; cursor: crosshair;
+    border: 1px solid var(--border); user-select: none; touch-action: none;
+    background:
+      linear-gradient(160deg, color-mix(in srgb, var(--accent) 22%, var(--surface-2)), color-mix(in srgb, var(--accent-2) 14%, var(--surface-2)));
+  }
+  .screen .wall { position: absolute; inset: 0; opacity: .5;
+    background-image: radial-gradient(color-mix(in srgb, var(--muted) 45%, transparent) 1px, transparent 1px);
+    background-size: 14px 14px; }
+  .screen .fake { position: absolute; border-radius: 8px; background: color-mix(in srgb, var(--surface) 78%, transparent);
+    border: 1px solid var(--border); box-shadow: 0 6px 16px -10px rgba(0,0,0,.5); font-size: 10px; color: var(--muted);
+    display: flex; align-items: center; justify-content: center; overflow: hidden; }
+  .screen .fake.hot { outline: 2px dashed var(--accent); outline-offset: 2px; }
+  .screen .hint { position: absolute; left: 50%; bottom: 8px; transform: translateX(-50%); font-size: 10.5px;
+    color: var(--muted); background: color-mix(in srgb, var(--surface) 80%, transparent); padding: 3px 9px; border-radius: 99px; }
+
+  /* 选区：半透明遮罩靠超大 box-shadow 实现 */
+  .sel { position: absolute; display: none; border: 1.5px solid var(--accent); border-radius: 2px;
+    box-shadow: 0 0 0 9999px rgba(12, 14, 22, .48); pointer-events: none; }
+  .sel.on { display: block; }
+  .sel .size { position: absolute; top: -22px; left: -1px; font-family: var(--mono); font-size: 10.5px; font-weight: 700;
+    background: var(--accent); color: #fff; padding: 2px 7px; border-radius: 6px; white-space: nowrap; }
+  .sel .size.below { top: auto; bottom: -22px; }
+  .sel .corner { position: absolute; width: 6px; height: 6px; background: var(--accent); }
+  .sel .corner.a { left: -3px; top: -3px; } .sel .corner.b { right: -3px; top: -3px; }
+  .sel .corner.c { left: -3px; bottom: -3px; } .sel .corner.d { right: -3px; bottom: -3px; }
+
+  /* ---------- 操作条 ---------- */
+  .opbar { display: none; align-items: center; gap: 6px; padding: 7px 9px; border-radius: 11px;
+    background: var(--surface-2); border: 1px solid color-mix(in srgb, var(--accent) 34%, transparent);
+    box-shadow: 0 10px 24px -16px rgba(0,0,0,.6); }
+  .opbar.on { display: flex; animation: pop .3s cubic-bezier(.2,1.6,.4,1) both; }
+
+  /* ---------- 贴图卡片 ---------- */
+  .pin-layer { position: relative; height: 128px; border-radius: 12px; border: 1px dashed var(--border);
+    background: color-mix(in srgb, var(--muted) 8%, transparent); overflow: hidden; }
+  .pin-layer .ph { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); font-size: 11px; color: var(--muted); }
+  .pin { position: absolute; left: 0; top: 0; width: 96px; border-radius: 9px; overflow: hidden; cursor: grab;
+    background: linear-gradient(150deg, color-mix(in srgb, var(--accent) 40%, var(--surface)), color-mix(in srgb, var(--accent-2) 30%, var(--surface)));
+    border: 2px solid var(--surface); box-shadow: 0 8px 20px -10px rgba(0,0,0,.6);
+    touch-action: none; user-select: none; }
+  .pin:active { cursor: grabbing; }
+  .pin .ph-bar { display: flex; align-items: center; gap: 3px; padding: 3px 5px; background: color-mix(in srgb, #000 42%, transparent); }
+  .pin .ph-bar b { font-size: 9.5px; color: #fff; font-weight: 600; }
+  .pin .ph-bar .x { margin-left: auto; font-size: 10px; color: #fff; cursor: pointer; opacity: .8; line-height: 1; }
+  .pin .ph-bar .x:hover { opacity: 1; }
+  .pin .ph-body { height: 54px; display: grid; place-items: center; font-size: 17px; }
+
+  .keys { display: flex; flex-direction: column; gap: 4px; font-size: 10.5px; color: var(--muted); }
+  .keys .r { display: flex; align-items: center; gap: 6px; }
+</style>
+</head>
+<body>
+<div class="win" style="--w:440px">
+  <header class="win-head">
+    <div class="lights"><i></i><i></i><i></i></div>
+    <div class="win-title"><span class="ico">✂️</span>截图贴图<span class="win-sub">选区与贴图</span></div>
+    <div class="spacer"></div>
+    <span class="badge mono" id="clock">--:--:--</span>
+  </header>
+
+  <div class="win-body">
+    <div class="chips" id="modes">
+      <span class="chip on" data-mode="rect">▭ 矩形选区</span>
+      <span class="chip" data-mode="window">🪟 窗口</span>
+      <span class="chip" data-mode="full">🖥 全屏</span>
+      <span class="spacer" style="flex:1"></span>
+      <span class="chip" id="delay">⏱ 延时 3s</span>
+    </div>
+
+    <!-- 模拟屏幕：真实 pointer 事件拖拽选区 -->
+    <div class="screen" id="screen">
+      <div class="wall"></div>
+      <div class="fake" data-win style="left:14px;top:16px;width:104px;height:66px">浏览器窗口</div>
+      <div class="fake" data-win style="left:130px;top:34px;width:92px;height:78px">代码编辑器</div>
+      <div class="fake" data-win style="right:12px;top:14px;width:82px;height:52px">音乐播放器</div>
+      <div class="fake" data-win style="left:34px;bottom:14px;width:120px;height:46px">文件夹</div>
+      <div class="fake" data-win style="right:18px;bottom:22px;width:96px;height:60px">聊天窗口</div>
+      <div class="hint" id="screenHint">按住鼠标左键拖拽，框选要截图的范围喵~</div>
+      <div class="sel" id="sel">
+        <span class="size" id="sizeTag">0 × 0</span>
+        <i class="corner a"></i><i class="corner b"></i><i class="corner c"></i><i class="corner d"></i>
+      </div>
+    </div>
+
+    <!-- 松开鼠标后出现的操作条 -->
+    <div class="opbar" id="opbar">
+      <span class="tiny muted mono" id="opInfo">0 × 0</span>
+      <div class="spacer" style="flex:1"></div>
+      <button class="btn sm primary" id="pin">📌 贴图</button>
+      <button class="btn sm" id="copy">📋 复制</button>
+      <button class="btn sm" id="save">💾 保存</button>
+      <button class="btn sm danger" id="cancel">✕ 取消</button>
+    </div>
+
+    <div class="row between">
+      <span class="small bold">贴图板 <span class="tiny muted" id="pinCount"></span></span>
+      <button class="btn sm danger" id="clearPins">清空贴图</button>
+    </div>
+
+    <div class="pin-layer" id="pinLayer">
+      <span class="ph" id="pinEmpty">贴图会浮在这里，按住卡片可以拖动喵~</span>
+    </div>
+
+    <div class="keys">
+      <div class="r"><span class="kbd">拖拽</span> 绘制矩形选区 · <span class="kbd">Esc</span> 取消选区</div>
+      <div class="r"><span class="kbd">Ctrl</span>+<span class="kbd">Shift</span>+<span class="kbd">A</span> 截取全屏 · <span class="kbd">Enter</span> 直接贴图</div>
+    </div>
+  </div>
+
+  <footer class="win-foot">
+    <span class="dot live"></span><span id="foot">截图模式：矩形选区</span>
+    <div class="spacer" style="flex:1"></div>
+    <span class="tiny">预览版 · 数据存本地</span>
+  </footer>
+</div>
+
+<script src="../assets/pl.js"></script>
+<script src="../assets/compact.js"></script>
+<script>
+(function () {
+  const { $, $$, toast, beep, store, clamp } = PL;
+
+  const screen = $('#screen'), sel = $('#sel'), sizeTag = $('#sizeTag'), opbar = $('#opbar');
+  const layer = $('#pinLayer');
+
+  let mode = store.get('shot-mode', 'rect');
+  let pins = store.get('shot-pins', []);
+  if (!Array.isArray(pins)) pins = [];
+  let sel0 = null;                 // 拖拽起点 {x,y}
+  let rect = null;                 // 当前选区 {x,y,w,h}（相对模拟屏幕）
+  let delayLeft = 0;               // 延时截图倒计时
+  let armedClear = false;
+
+  /* ---------- 选区绘制 ---------- */
+  const localPt = e => {
+    const r = screen.getBoundingClientRect();
+    return { x: clamp(e.clientX - r.left, 0, r.width), y: clamp(e.clientY - r.top, 0, r.height) };
+  };
+
+  function paint() {
+    if (!rect || rect.w < 2 || rect.h < 2) { sel.classList.remove('on'); return; }
+    sel.classList.add('on');
+    sel.style.left = rect.x + 'px';
+    sel.style.top = rect.y + 'px';
+    sel.style.width = rect.w + 'px';
+    sel.style.height = rect.h + 'px';
+    sizeTag.textContent = Math.round(rect.w) + ' × ' + Math.round(rect.h);
+    // 选区太靠近顶部时，把尺寸标签放到下方
+    sizeTag.classList.toggle('below', rect.y < 26);
+  }
+
+  function showOpbar() {
+    const ok = rect && rect.w >= 4 && rect.h >= 4;
+    opbar.classList.toggle('on', !!ok);
+    if (ok) $('#opInfo').textContent = Math.round(rect.w) + ' × ' + Math.round(rect.h) +
+      ' @ (' + Math.round(rect.x) + ', ' + Math.round(rect.y) + ')';
+  }
+
+  screen.addEventListener('pointerdown', e => {
+    if (mode === 'window') {
+      const win = e.target.closest && e.target.closest('[data-win]');
+      if (win) { selectWindow(win); return; }
+    }
+    if (mode === 'full') { selectFull(); return; }
+    sel0 = localPt(e);
+    rect = { x: sel0.x, y: sel0.y, w: 0, h: 0 };
+    opbar.classList.remove('on');
+    try { screen.setPointerCapture(e.pointerId); } catch (err) { /* 忽略 */ }
+    paint();
+  });
+
+  screen.addEventListener('pointermove', e => {
+    if (!sel0) return;
+    const p = localPt(e);
+    rect = {
+      x: Math.min(sel0.x, p.x), y: Math.min(sel0.y, p.y),
+      w: Math.abs(p.x - sel0.x), h: Math.abs(p.y - sel0.y)
+    };
+    paint();
+  });
+
+  screen.addEventListener('pointerup', () => {
+    if (!sel0) return;
+    sel0 = null;
+    if (!rect || rect.w < 4 || rect.h < 4) {
+      rect = null; paint(); opbar.classList.remove('on');
+      toast('选区太小啦，再拖一次喵~', 'warn');
+      return;
+    }
+    beep(880, .08);
+    showOpbar();
+  });
+
+  /** 窗口模式：直接把某个模拟窗口作为选区 */
+  function selectWindow(win) {
+    const r = win.getBoundingClientRect(), s = screen.getBoundingClientRect();
+    rect = { x: r.left - s.left, y: r.top - s.top, w: r.width, h: r.height };
+    paint(); showOpbar(); beep(760, .08);
+    toast('已选中窗口，可以贴图了喵~', 'ok');
+  }
+  function selectFull() {
+    const s = screen.getBoundingClientRect();
+    rect = { x: 0, y: 0, w: s.width || 420, h: s.height || 214 };
+    paint(); showOpbar(); beep(760, .08);
+    toast('已选中全屏区域', 'ok');
+  }
+
+  function resetSel() {
+    sel0 = null; rect = null;
+    paint(); opbar.classList.remove('on');
+  }
+
+  /* ---------- 操作条按钮 ---------- */
+  $('#cancel').onclick = () => { resetSel(); toast('已取消本次选区', 'warn'); };
+
+  $('#pin').onclick = () => {
+    if (!rect) return;
+    const w = clamp(Math.round(rect.w * .55), 56, 140);
+    const item = {
+      id: 'pin' + Date.now().toString(36),
+      x: Math.round(rect.x * .5), y: Math.round(rect.y * .5),
+      w: w, h: clamp(Math.round(rect.h * .55), 30, 78),
+      label: Math.round(rect.w) + '×' + Math.round(rect.h)
+    };
+    pins.push(item);
+    if (pins.length > 8) pins.shift();
+    save(); renderPins(); resetSel();
+    beep(980, .1); toast('已贴到贴图板，可以拖着走喵~', 'ok');
+  };
+
+  $('#copy').onclick = () => {
+    if (!rect) return;
+    const info = Math.round(rect.w) + '×' + Math.round(rect.h) + ' 的截图';
+    const nav = window.navigator || {};
+    if (nav.clipboard && nav.clipboard.writeText) {
+      nav.clipboard.writeText(info).then(
+        () => toast('已复制到剪贴板：' + info, 'ok'),
+        () => toast('复制失败，剪贴板不可用', 'warn'));
+    } else toast('已复制到剪贴板：' + info, 'ok');
+    resetSel();
+  };
+
+  $('#save').onclick = () => {
+    if (!rect) return;
+    const name = '截图_' + PL.today() + '_' + Math.round(rect.w) + 'x' + Math.round(rect.h) + '.png';
+    toast('已保存到 图片\\截图\\' + name, 'ok');
+    beep(700, .09);
+    resetSel();
+  };
+
+  /* ---------- 贴图卡片：pointer 事件拖动 ---------- */
+  function renderPins() {
+    // 清掉旧卡片，保留占位提示
+    $$('.pin', layer).forEach(el => el.remove());
+    const ph = $('#pinEmpty');
+    ph.style.display = pins.length ? 'none' : '';
+    $('#pinCount').textContent = pins.length ? '共 ' + pins.length + ' 张' : '';
+    store.set('shot-pins', pins);
+
+    pins.forEach(p => {
+      const el = document.createElement('div');
+      el.className = 'pin';
+      el.dataset.id = p.id;
+      el.style.transform = 'translate(' + p.x + 'px,' + p.y + 'px)';
+      el.style.width = p.w + 'px';
+      el.innerHTML =
+        '<div class="ph-bar"><b>📌 ' + p.label + '</b><span class="x" data-close="' + p.id + '" title="关闭">✕</span></div>' +
+        '<div class="ph-body" style="height:' + p.h + 'px">🖼️</div>';
+      layer.appendChild(el);
+    });
+
+    // 关闭单张贴图
+    $$('.pin [data-close]', layer).forEach(x => x.onclick = e => {
+      e.stopPropagation();
+      pins = pins.filter(p => p.id !== x.dataset.close);
+      renderPins(); toast('已关闭这张贴图', 'warn');
+    });
+
+    // 拖动
+    $$('.pin', layer).forEach(el => {
+      let off = null;
+      el.addEventListener('pointerdown', e => {
+        if (e.target.dataset && e.target.dataset.close) return;
+        const p = pins.find(x => x.id === el.dataset.id);
+        if (!p) return;
+        const r = el.getBoundingClientRect();
+        off = { dx: e.clientX - r.left, dy: e.clientY - r.top, p: p, el: el };
+        el.style.zIndex = 99;
+        try { el.setPointerCapture(e.pointerId); } catch (err) { /* 忽略 */ }
+      });
+      el.addEventListener('pointermove', e => {
+        if (!off) return;
+        const box = layer.getBoundingClientRect();
+        const cw = off.el.offsetWidth || off.p.w;
+        const ch = off.el.offsetHeight || (off.p.h + 18);
+        off.p.x = Math.round(clamp(e.clientX - box.left - off.dx, 0, Math.max(0, box.width - cw)));
+        off.p.y = Math.round(clamp(e.clientY - box.top - off.dy, 0, Math.max(0, box.height - ch)));
+        off.el.style.transform = 'translate(' + off.p.x + 'px,' + off.p.y + 'px)';
+      });
+      const end = () => {
+        if (!off) return;
+        off.el.style.zIndex = '';
+        off = null;
+        store.set('shot-pins', pins);
+      };
+      el.addEventListener('pointerup', end);
+      el.addEventListener('pointercancel', end);
+    });
+  }
+
+  $('#clearPins').onclick = () => {
+    if (!pins.length) { toast('贴图板已经是空的喵~', 'warn'); return; }
+    if (!armedClear) {
+      armedClear = true;
+      $('#clearPins').textContent = '确认清空？';
+      toast('再点一次就清空所有贴图喵！', 'warn');
+      setTimeout(() => { armedClear = false; $('#clearPins').textContent = '清空贴图'; }, 3000);
+      return;
+    }
+    armedClear = false;
+    $('#clearPins').textContent = '清空贴图';
+    pins = []; renderPins(); beep(320, .18, 'triangle');
+    toast('贴图已全部清空', 'danger');
+  };
+
+  /* ---------- 模式切换 / 延时截图 ---------- */
+  const MODE_NAME = { rect: '矩形选区', window: '窗口', full: '全屏' };
+  function applyMode(m) {
+    mode = m;
+    $$('#modes .chip[data-mode]').forEach(c => c.classList.toggle('on', c.dataset.mode === m));
+    $('#foot').textContent = '截图模式：' + MODE_NAME[m];
+    $('#screenHint').textContent = m === 'rect' ? '按住鼠标左键拖拽，框选要截图的范围喵~'
+      : m === 'window' ? '点一下任意模拟窗口，即可整窗选中喵~'
+      : '点一下模拟屏幕，直接截取全屏喵~';
+    store.set('shot-mode', m);
+    resetSel();
+  }
+  $$('#modes .chip[data-mode]').forEach(c => c.onclick = () => {
+    applyMode(c.dataset.mode);
+    toast('已切换到「' + MODE_NAME[c.dataset.mode] + '」模式');
+  });
+
+  $('#delay').onclick = () => {
+    if (delayLeft) { delayLeft = 0; toast('已取消延时截图', 'warn'); return; }
+    delayLeft = 3;
+    beep(660, .08);
+    toast('3 秒后自动截取全屏，请准备好喵~', 'info');
+  };
+
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape') { resetSel(); toast('已取消选区', 'warn'); }
+    if (e.key === 'Enter' && rect) $('#pin').click();
+  });
+
+  /* ---------- 每秒：时钟 + 延时倒计时 ---------- */
+  setInterval(() => {
+    $('#clock').textContent = PL.fmtClock();
+    if (delayLeft > 0) {
+      delayLeft--;
+      $('#delay').textContent = '⏱ ' + (delayLeft || '咔嚓');
+      if (delayLeft === 0) {
+        $('#delay').textContent = '⏱ 延时 3s';
+        beep(1200, .14); PL.chime();
+        selectFull();
+        toast('咔嚓！已截取全屏，选择下一步操作喵~', 'ok');
+      }
+    }
+    // 贴图板或延时状态可能刚变化，顺带刷新精简组件
+    PL.compactRefreshAll();
+  }, 1000);
+
+  /* ---------- 初始化 ---------- */
+  applyMode(MODE_NAME[mode] ? mode : 'rect');
+  renderPins();
+
+  /* ============================================================
+     桌面精简形态：贴图数量 / 最近贴图 / 截图模式
+     ============================================================ */
+  const cwf = PL.cwf;
+
+  /* 贴图板上限，与贴图按钮里的 `if (pins.length > 8) pins.shift()` 保持一致 */
+  const PIN_MAX = 8;
+  const MODE_ICON = { rect: '▭', window: '🪟', full: '🖥️' };
+
+  PL.compact({
+    id: 'screenshot-pin',
+    name: '截图贴图',
+    icon: '✂️',
+    defFormat: 'count',
+    defSize: 'square',
+    data: () => ({ pins, mode }),
+    formats: [
+      {
+        id: 'count',
+        name: '贴图数量',
+        icon: '📌',
+        options: [
+          { key: 'label', type: 'text', label: '标签文字', def: '贴图板上' },
+          { key: 'warnFull', type: 'bool', label: '贴满时提醒', def: true },
+        ],
+        render: (o, d) => {
+          const n = (d.pins || []).length;
+          const full = n >= PIN_MAX;
+          const name = full && o.warnFull !== false ? '贴图板已满 ' + PIN_MAX + '/' + PIN_MAX : (o.label || '贴图张数');
+          return cwf.stat({ value: n, unit: '张', name: name });
+        },
+      },
+      {
+        id: 'list',
+        name: '最近贴图',
+        icon: '🖼️',
+        options: [
+          { key: 'max', type: 'num', label: '显示条数', def: 3, min: 2, max: 5 },
+          { key: 'order', type: 'select', label: '排序', def: 'new',
+            options: [
+              { value: 'new', label: '最新在前' },
+              { value: 'old', label: '最早在前' },
+            ] },
+        ],
+        render: (o, d) => {
+          // pins 是按贴图先后 push 的，末尾即最新；「最新在前」需要倒过来
+          const arr = (d.pins || []).slice();
+          if (o.order !== 'old') arr.reverse();
+          const rows = arr.map(p => ({ icon: '📌', text: (p.label || '贴图'), right: '' }));
+          if (!rows.length) return cwf.list({ rows: [{ icon: '✂️', text: '还没有贴图喵~', right: '' }], max: 1 });
+          return cwf.list({ rows, max: Number(o.max) || 3 });
+        },
+      },
+      {
+        id: 'mode',
+        name: '截图模式',
+        icon: '▭',
+        options: [
+          { key: 'which', type: 'select', label: '图标内容', def: 'mode',
+            options: [
+              { value: 'mode', label: '当前截图模式' },
+              { value: 'shot', label: '剪刀图标' },
+            ] },
+          { key: 'showName', type: 'bool', label: '显示名称', def: true },
+        ],
+        render: (o, d) => {
+          if (o.which === 'shot') {
+            return cwf.icon({ emoji: '✂️', color: '#ef4444', name: '截图贴图', label: o.showName !== false });
+          }
+          const m = MODE_NAME[d.mode] ? d.mode : 'rect';
+          return cwf.icon({
+            emoji: MODE_ICON[m] || '▭',
+            color: '#ef4444',
+            name: MODE_NAME[m],
+            label: o.showName !== false,
+          });
+        },
+      },
+    ],
+  });
+})();
+</script>
+</body>
+</html>

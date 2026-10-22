@@ -1,9 +1,19 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="zh-CN" data-theme="dark">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- 避免首帧白闪：Electron 的窗口底色是 #000000，网页若是浅色会闪一下 -->
+    <meta name="color-scheme" content="dark light" />
     <title>Workbench · 插件式工作台</title>
+    <!-- 设计系统字体 Inter（Modern Dark Cinema 搭配）。用 preconnect 抢在
+         样式表之前建连，避免字体到位前先用回退字族渲染、出现一次跳字。 -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap"
+    />
   </head>
   <body>
     <div id="root"></div>

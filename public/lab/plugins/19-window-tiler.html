@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>窗口布局 · 分屏整理</title>
+<link rel="stylesheet" href="../assets/theme.css">
+<link rel="stylesheet" href="../assets/compact.css">
+<style>
+  :root { --accent: #8b5cf6; --accent-2: #a78bfa; }
+
+  .tpl-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 7px; }
+  .tpl { position: relative; height: 52px; border-radius: 10px; cursor: pointer; padding: 5px;
+         background: var(--surface-2); border: 1px solid var(--border); transition: all .2s; }
+  .tpl:hover { border-color: color-mix(in srgb, var(--accent) 45%, transparent); transform: translateY(-1px); }
+  .tpl.on { border-color: var(--accent); background: var(--accent-soft); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 22%, transparent); }
+  .tpl .mini { position: absolute; inset: 5px; border-radius: 6px; overflow: hidden; }
+  .tpl .mini i { position: absolute; display: block; border-radius: 3px;
+                 background: color-mix(in srgb, var(--accent) 34%, transparent);
+                 border: 1px solid color-mix(in srgb, var(--accent) 55%, transparent); transition: all .35s cubic-bezier(.3,1,.4,1); }
+  .tpl .nm { position: absolute; left: 0; right: 0; bottom: -15px; text-align: center; font-size: 9.5px; color: var(--muted); }
+  .tpl-wrap { padding-bottom: 15px; }
+
+  /* 演示桌面 */
+  .desk { position: relative; height: 190px; border-radius: 12px; overflow: hidden;
+          border: 1px solid var(--border);
+          background: linear-gradient(150deg, color-mix(in srgb, var(--accent) 12%, var(--surface-2)), var(--surface-2)); }
+  .desk .dwall { position: absolute; inset: 0; opacity: .45;
+                 background-image: linear-gradient(color-mix(in srgb, var(--muted) 30%, transparent) 1px, transparent 1px),
+                                   linear-gradient(90deg, color-mix(in srgb, var(--muted) 30%, transparent) 1px, transparent 1px);
+                 background-size: 100% 33.33%, 33.33% 100%; }
+  .desk .bar-top { position: absolute; left: 0; right: 0; top: 0; height: 13px; background: color-mix(in srgb, var(--muted) 18%, transparent);
+                   font-size: 8px; color: var(--muted); display: flex; align-items: center; justify-content: center; }
+
+  .blk { position: absolute; border-radius: 8px; overflow: hidden; font-size: 10px; color: #fff; font-weight: 600;
+         display: flex; align-items: center; justify-content: center; gap: 4px;
+         background: linear-gradient(140deg, var(--accent), var(--accent-2));
+         box-shadow: 0 8px 18px -12px rgba(0,0,0,.7);
+         transition: left .5s cubic-bezier(.3,1.05,.4,1), top .5s cubic-bezier(.3,1.05,.4,1),
+                     width .5s cubic-bezier(.3,1.05,.4,1), height .5s cubic-bezier(.3,1.05,.4,1), opacity .3s; }
+  .blk.dim { opacity: 0; }
+  .blk span { pointer-events: none; text-shadow: 0 1px 2px rgba(0,0,0,.35); }
+
+  .lname { font-size: 13px; font-weight: 700; }
+  .gap-row { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 9px; }
+</style>
+</head>
+<body>
+<div class="win" style="--w:420px">
+  <header class="win-head">
+    <div class="lights"><i></i><i></i><i></i></div>
+    <div class="win-title"><span class="ico">🪟</span>窗口布局<span class="win-sub">分屏整理</span></div>
+    <div class="spacer"></div>
+    <span class="badge mono" id="clock">--:--:--</span>
+  </header>
+
+  <div class="win-body">
+    <div class="row between">
+      <div class="col" style="gap:1px">
+        <span class="tiny muted">当前布局</span>
+        <span class="lname" id="lname">左右分屏</span>
+      </div>
+      <div class="col" style="gap:1px;align-items:flex-end">
+        <span class="tiny muted">窗口数量</span>
+        <span class="lname" id="wnum">2</span>
+      </div>
+    </div>
+
+    <!-- 演示桌面：方块按模板动画移动 -->
+    <div class="desk" id="desk">
+      <div class="dwall"></div>
+      <div class="bar-top">模拟桌面 · 拖动间隙滑块看实时效果</div>
+      <div class="blk" id="w1"><span>📄 文档</span></div>
+      <div class="blk" id="w2"><span>🌐 浏览器</span></div>
+      <div class="blk" id="w3"><span>💬 聊天</span></div>
+      <div class="blk" id="w4"><span>🎵 音乐</span></div>
+    </div>
+
+    <div class="gap-row card">
+      <span class="small bold">间隙</span>
+      <input type="range" id="gap" min="0" max="24" step="1" value="8">
+      <span class="small mono" id="gapVal">8 px</span>
+    </div>
+
+    <span class="small bold">布局模板</span>
+    <div class="tpl-grid tpl-wrap" id="tpls"></div>
+
+    <div class="row between card">
+      <label class="inline"><input type="checkbox" id="auto"> 自动演示（每 3 秒换一个布局）</label>
+      <span class="tiny mono muted" id="autoLeft"></span>
+    </div>
+
+    <div class="row">
+      <select id="monitor">
+        <option value="main">主显示器 · 1920×1080</option>
+        <option value="sub">副显示器 · 2560×1440</option>
+        <option value="all">全部显示器 · 4480×1440</option>
+      </select>
+      <button class="btn" id="restore" title="恢复上一个布局">↩︎ 恢复</button>
+    </div>
+
+    <div class="keys card col" style="gap:4px">
+      <span class="tiny muted"><span class="kbd">Win</span>+<span class="kbd">←</span> 左半屏 · <span class="kbd">Win</span>+<span class="kbd">→</span> 右半屏</span>
+      <span class="tiny muted"><span class="kbd">Win</span>+<span class="kbd">↑</span> 最大化 · <span class="kbd">Win</span>+<span class="kbd">↓</span> 还原/最小化</span>
+      <span class="tiny muted"><span class="kbd">Ctrl</span>+<span class="kbd">Alt</span>+<span class="kbd">Q</span> 四分屏 · <span class="kbd">Ctrl</span>+<span class="kbd">Alt</span>+<span class="kbd">C</span> 居中</span>
+    </div>
+  </div>
+
+  <footer class="win-foot">
+    <span class="dot live"></span><span id="foot">布局引擎就绪</span>
+    <div class="spacer" style="flex:1"></div>
+    <span class="tiny">预览版 · 数据存本地</span>
+  </footer>
+</div>
+
+<script src="../assets/pl.js"></script>
+<script src="../assets/compact.js"></script>
+<script>
+(function () {
+  const { $, $$, toast, beep, store, clamp } = PL;
+
+  /* ---------- 布局模板：每个窗口用百分比矩形描述 ---------- */
+  const LAYOUTS = [
+    { id: 'lr',    name: '左右分屏', n: 2, rects: [[0, 0, 50, 100], [50, 0, 50, 100]] },
+    { id: 'tb',    name: '上下分屏', n: 2, rects: [[0, 0, 100, 50], [0, 50, 100, 50]] },
+    { id: 'quad',  name: '四分屏',   n: 4, rects: [[0, 0, 50, 50], [50, 0, 50, 50], [0, 50, 50, 50], [50, 50, 50, 50]] },
+    { id: 'three', name: '三列布局', n: 3, rects: [[0, 0, 33.34, 100], [33.34, 0, 33.33, 100], [66.67, 0, 33.33, 100]] },
+    { id: 'center',name: '居中窗口', n: 1, rects: [[22, 12, 56, 76]] },
+    { id: 'max',   name: '最大化',   n: 1, rects: [[0, 0, 100, 100]] }
+  ];
+
+  let cur = store.get('tiler-layout', 'lr');
+  let prev = null;
+  let gap = store.get('tiler-gap', 8);
+  let auto = store.get('tiler-auto', false);
+  let autoLeft = 3;
+  let monitor = store.get('tiler-monitor', 'main');
+
+  const layout = id => LAYOUTS.find(l => l.id === id) || LAYOUTS[0];
+
+  /* 演示桌面上的四个窗口方块 */
+  const BLOCKS = [$('#w1'), $('#w2'), $('#w3'), $('#w4')];
+
+  /* ---------- 迷你示意图 ---------- */
+  function renderTpls() {
+    const box = $('#tpls');
+    box.innerHTML = '';
+    LAYOUTS.forEach(l => {
+      const el = document.createElement('div');
+      el.className = 'tpl' + (l.id === cur ? ' on' : '');
+      el.dataset.id = l.id;
+      el.title = l.name;
+      el.innerHTML = '<div class="mini">' + l.rects.map(r =>
+        '<i style="left:' + r[0] + '%;top:' + r[1] + '%;width:' + r[2] + '%;height:' + r[3] + '%"></i>').join('') +
+        '</div><span class="nm">' + l.name + '</span>';
+      el.onclick = () => apply(l.id, true);
+      box.appendChild(el);
+    });
+  }
+
+  /* ---------- 把窗口方块动画移动到目标位置 ---------- */
+  function place() {
+    const l = layout(cur);
+    const g = gap / 2;
+    // 副显示器：整体略微内缩，模拟不同分辨率下的排布差异
+    const inset = monitor === 'sub' ? 1.5 : 0;
+
+    BLOCKS.forEach((el, i) => {
+      const r = l.rects[i];
+      if (!r) { el.classList.add('dim'); return; }
+      el.classList.remove('dim');
+      const x = r[0] + (r[0] ? inset : 0), y = r[1] + (r[1] ? inset : 0);
+      const w = r[2] - inset, h = r[3] - inset;
+      el.style.left = 'calc(' + x + '% + ' + g + 'px)';
+      el.style.top = 'calc(' + y + '% + ' + g + 'px)';
+      el.style.width = 'calc(' + w + '% - ' + g * 2 + 'px)';
+      el.style.height = 'calc(' + h + '% - ' + g * 2 + 'px)';
+    });
+
+    $('#lname').textContent = l.name;
+    $('#wnum').textContent = l.n;
+    $('#foot').textContent = '布局引擎就绪 · ' + l.name + ' · 间隙 ' + gap + 'px';
+    $$('#tpls .tpl').forEach(t => t.classList.toggle('on', t.dataset.id === cur));
+  }
+
+  /** 应用布局；manual 为 true 时记录上一个布局并给反馈 */
+  function apply(id, manual) {
+    if (!layout(id)) return;
+    if (id === cur && manual) { toast('已经是「' + layout(id).name + '」啦', 'warn'); return; }
+    prev = cur;
+    cur = id;
+    store.set('tiler-layout', cur);
+    place();
+    if (manual) {
+      beep(760, .1);
+      toast('已应用布局：' + layout(id).name + '（' + layout(id).n + ' 个窗口）', 'ok');
+    }
+  }
+
+  /* ---------- 间隙滑块 ---------- */
+  $('#gap').value = gap;
+  $('#gapVal').textContent = gap + ' px';
+  $('#gap').oninput = () => {
+    gap = clamp(+$('#gap').value, 0, 24);
+    $('#gapVal').textContent = gap + ' px';
+    store.set('tiler-gap', gap);
+    place();
+  };
+  $('#gap').onchange = () => toast('窗口间隙已设为 ' + gap + ' px');
+
+  /* ---------- 恢复上一个布局 ---------- */
+  $('#restore').onclick = () => {
+    if (!prev) { toast('还没有可以恢复的上一个布局喵~', 'warn'); return; }
+    const back = prev;
+    prev = cur;
+    cur = back;
+    store.set('tiler-layout', cur);
+    place();
+    beep(620, .1);
+    toast('已恢复上一个布局：' + layout(cur).name, 'ok');
+  };
+
+  /* ---------- 显示器 ---------- */
+  const MON_NAME = { main: '主显示器 1920×1080', sub: '副显示器 2560×1440', all: '全部显示器 4480×1440' };
+  $('#monitor').value = monitor;
+  $('#monitor').onchange = () => {
+    monitor = $('#monitor').value;
+    store.set('tiler-monitor', monitor);
+    place();
+    toast('已切换到「' + (MON_NAME[monitor] || monitor) + '」并重新排布窗口', 'ok');
+  };
+
+  /* ---------- 自动演示 ---------- */
+  $('#auto').checked = auto;
+  $('#auto').onchange = () => {
+    auto = $('#auto').checked;
+    store.set('tiler-auto', auto);
+    autoLeft = 3;
+    toast(auto ? '自动演示已开启，每 3 秒换一个布局' : '自动演示已停止', auto ? 'ok' : 'warn');
+  };
+
+  /* ---------- 每秒：时钟 + 自动轮播倒计时 ---------- */
+  setInterval(() => {
+    $('#clock').textContent = PL.fmtClock();
+    if (!auto) { $('#autoLeft').textContent = ''; PL.compactRefreshAll(); return; }
+    autoLeft--;
+    $('#autoLeft').textContent = autoLeft + 's';
+    if (autoLeft <= 0) {
+      autoLeft = 3;
+      const i = LAYOUTS.findIndex(l => l.id === cur);
+      apply(LAYOUTS[(i + 1) % LAYOUTS.length].id, false);
+    }
+    PL.compactRefreshAll();
+  }, 1000);
+
+  renderTpls();
+  place();
+
+  /* ============================================================
+     桌面精简形态：当前布局示意图 / 布局清单 / 窗口数
+     ============================================================ */
+  const cwf = PL.cwf;
+
+  /**
+   * 把布局的 rects 画成迷你示意图（百分比定位的小方块）。
+   * 这是本插件最直观的精简表达 —— 一眼看出当前是哪种分屏。
+   */
+  function layoutDiagram(l, gapPct) {
+    return '<div style="position:absolute;inset:10px;display:block">' +
+      l.rects.map((r, i) =>
+        '<span style="position:absolute;left:' + r[0] + '%;top:' + r[1] + '%;' +
+        'width:' + r[2] + '%;height:' + r[3] + '%;' +
+        'background:color-mix(in srgb,var(--accent) ' + (i === 0 ? 62 : 26) + '%,transparent);' +
+        'border:1px solid color-mix(in srgb,var(--accent) 55%,transparent);' +
+        'border-radius:4px;box-sizing:border-box;' +
+        'margin:' + (gapPct / 2) + 'px"></span>'
+      ).join('') + '</div>';
+  }
+
+  PL.compact({
+    id: 'window-tiler',
+    name: '窗口布局',
+    icon: '🪟',
+    defFormat: 'icon',
+    defSize: 'square',
+    data: () => ({ cur, gap, layout: layout(cur) }),
+    formats: [
+      {
+        id: 'icon',
+        name: '布局示意',
+        icon: '🪟',
+        options: [
+          { key: 'showName', type: 'bool', label: '显示布局名', def: true },
+        ],
+        render: (o) => {
+          const l = layout(cur);
+          return {
+            cls: 'cw-icon',
+            html: '<span class="ic" style="position:relative;overflow:hidden;background:transparent;box-shadow:none">' +
+                  layoutDiagram(l, gap) + '</span>' +
+                  (o.showName === false ? '' : '<span class="nm">' + l.name + '</span>'),
+          };
+        },
+      },
+      {
+        id: 'list',
+        name: '布局清单',
+        icon: '📋',
+        options: [
+          { key: 'max', type: 'num', label: '显示条数', def: 3, min: 2, max: 6 },
+        ],
+        render: (o) => {
+          const rows = LAYOUTS.map(l => ({
+            icon: l.id === cur ? '✅' : '▫️',
+            text: l.name,
+            right: l.n + '窗',
+          }));
+          return cwf.list({ rows, max: Number(o.max) || 3 });
+        },
+      },
+      {
+        id: 'stat',
+        name: '窗口数',
+        icon: '🔢',
+        options: [
+          { key: 'label', type: 'text', label: '标签文字', def: '当前布局窗口' },
+        ],
+        render: (o) => cwf.stat({
+          value: layout(cur).n,
+          unit: '个',
+          name: (o.label || '当前布局窗口') + ' · ' + layout(cur).name,
+        }),
+      },
+    ],
+  });
+})();
+</script>
+</body>
+</html>

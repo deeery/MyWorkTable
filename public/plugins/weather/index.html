@@ -3,15 +3,18 @@
 <head>
 <meta charset="UTF-8" />
 <style>
-  :root { --fg:#23263a; --muted:#8a90a6; --accent:#3f9ee8; }
-  [data-theme="dark"] { --fg:#dfe3f0; --muted:#7d84a3; }
-  html,body{height:100%;margin:0;background:transparent;}
+  /* 背景：与 clock 同一套底色约定 —— 深色取「比卡片更深一档」(#13171e，卡片 #1e2430 / 画布 #0e1117)，
+     浅色给中性底；文字色仍随主题切换。 */
+  :root { --fg:#23263a; --muted:#6b7080; --accent:#3f9ee8; --bg:#f5f7fa; }
+  [data-theme="dark"] { --fg:#ffffff; --muted:#c0c8e0; --accent:#7fb8ff; --bg:#13171e; }
+  html,body{height:100%;margin:0;background:var(--bg);user-select:none;}
   body{display:grid;place-items:center;font-family:-apple-system,'PingFang SC','Microsoft YaHei',sans-serif;color:var(--fg);}
-  .wrap{text-align:center;}
-  .icon{font-size:44px;}
-  .temp{font-size:30px;font-weight:700;margin:4px 0;}
+  .wrap{text-align:center;padding:6px 10px;}
+  .icon{font-size:36px;line-height:1.1;}
+  .temp{font-size:30px;font-weight:700;margin:2px 0;color:var(--fg);text-shadow:0 1px 3px rgba(0,0,0,.25);}
   .cond{color:var(--muted);font-size:13px;}
-  .meta{margin-top:8px;font-size:12px;color:var(--muted);}
+  .meta{margin-top:5px;font-size:12px;color:var(--muted);}
+  .sub{margin-top:2px;font-size:11px;color:var(--muted);opacity:.85;}
 </style>
 </head>
 <body>
@@ -19,29 +22,136 @@
     <div class="icon" id="icon">⛅</div>
     <div class="temp" id="temp">--°</div>
     <div class="cond" id="cond">加载中…</div>
-    <div class="meta">上海 · 更新于 <span id="ts">--</span></div>
+    <div class="meta" id="meta"></div>
+    <div class="sub" id="sub"></div>
   </div>
 <script>
-  // ============ Workbench iframe 插件：天气（低频刷新：宿主 30 分钟 tick 一次） ============
-  var CONDS = [
-    { icon:'☀️', cond:'晴', t:[24,30] },
-    { icon:'⛅', cond:'多云', t:[20,26] },
-    { icon:'☁️', cond:'阴', t:[17,22] },
-    { icon:'🌧️', cond:'小雨', t:[15,19] },
-  ]
-  function render() {
-    // 演示用模拟数据；真实插件应在此请求天气 API（受宿主刷新调度约束）
-    var c = CONDS[Math.floor(Math.random() * CONDS.length)]
-    document.getElementById('icon').textContent = c.icon
-    document.getElementById('temp').textContent = (c.t[0] + Math.floor(Math.random() * (c.t[1]-c.t[0]))) + '°C'
-    document.getElementById('cond').textContent = c.cond + ' · 湿度 ' + (40 + Math.floor(Math.random()*40)) + '%'
-    document.getElementById('ts').textContent = new Date().toLocaleTimeString('zh-CN')
+  // ============ Workbench iframe 插件：天气（中国天气网真实数据） ============
+  // 数据源：d1.weather.com.cn，经 dev server 的 /wapi 代理转发（该站无 CORS 头且要求 Referer）
+  //   sk_2d/{code}.html     实时天气，单变量 `var dataSK={...}`
+  //   dingzhi/{code}.html   当日预报，多变量 `var cityDZ{code} ={...};var alarmDZ{code} ={...}`
+  // 城市码由宿主经 workbench:init / workbench:config 的 config.cityCode 下发
+
+  var CITY_CODE = ''
+  var CITY_NAME = ''
+  var SK = null
+  var DZ = null
+
+  var el = {
+    icon: document.getElementById('icon'),
+    temp: document.getElementById('temp'),
+    cond: document.getElementById('cond'),
+    meta: document.getElementById('meta'),
+    sub: document.getElementById('sub'),
   }
+
+  /** 解析单变量赋值：取首个 `{` 之后的整体作为 JSON */
+  function parseSingle(text) {
+    var i = text.indexOf('{')
+    if (i < 0) return null
+    try { return JSON.parse(text.slice(i)) } catch (e) { return null }
+  }
+
+  /** 解析多变量赋值：按 `;var ` 切分，各自取 `=` 后首个 `{` 起的内容 */
+  function parseVars(text) {
+    var out = {}
+    var chunks = text.split(/;\s*var\s+/)
+    for (var i = 0; i < chunks.length; i++) {
+      var c = chunks[i].replace(/^var\s+/, '')
+      var eq = c.indexOf('=')
+      if (eq < 0) continue
+      var name = c.slice(0, eq).trim()
+      var b = c.indexOf('{', eq)
+      if (b < 0) continue
+      try { out[name] = JSON.parse(c.slice(b).replace(/;\s*$/, '')) } catch (e) { /* 跳过解析失败的变量 */ }
+    }
+    return out
+  }
+
+  function iconFor(wea) {
+    if (!wea) return '⛅'
+    if (wea.indexOf('雷') >= 0) return '⛈️'
+    if (wea.indexOf('雪') >= 0) return '🌨️'
+    if (wea.indexOf('雨') >= 0) return '🌧️'
+    if (wea.indexOf('雾') >= 0 || wea.indexOf('霾') >= 0) return '🌫️'
+    if (wea.indexOf('阴') >= 0) return '☁️'
+    if (wea.indexOf('云') >= 0) return '⛅'
+    if (wea.indexOf('晴') >= 0) return '☀️'
+    return '⛅'
+  }
+
+  function render() {
+    if (!CITY_CODE) {
+      el.icon.textContent = '📍'
+      el.temp.textContent = '--°'
+      el.cond.textContent = '点击齿轮选择城市'
+      el.meta.textContent = ''
+      el.sub.textContent = ''
+      return
+    }
+
+    var wea = (SK && SK.weather) || (DZ && DZ.weather) || ''
+    el.icon.textContent = iconFor(wea)
+    el.temp.textContent = SK && SK.temp ? SK.temp + '°' : '--°'
+
+    var cond = []
+    if (wea) cond.push(wea)
+    if (SK && SK.SD) cond.push('湿度 ' + SK.SD)
+    el.cond.textContent = cond.join(' · ') || '暂无数据'
+
+    var meta = []
+    if (SK && SK.WD) meta.push(SK.WD + ' ' + (SK.WS || ''))
+    if (SK && SK.aqi) meta.push('AQI ' + SK.aqi)
+    if (DZ && DZ.temp && DZ.tempn) meta.push(DZ.temp + '/' + DZ.tempn)
+    el.meta.textContent = meta.join(' · ')
+
+    var name = CITY_NAME || (SK && SK.cityname) || ''
+    var time = SK && SK.time ? ' · 更新 ' + SK.time : ''
+    el.sub.textContent = name + time
+  }
+
+  function load() {
+    if (!CITY_CODE) { render(); return }
+    var code = CITY_CODE
+
+    fetch('/wapi/sk_2d/' + code + '.html')
+      .then(function (r) { return r.text() })
+      .then(function (t) { SK = parseSingle(t); render() })
+      .catch(function () { /* 保留上一次数据 */ })
+
+    fetch('/wapi/dingzhi/' + code + '.html')
+      .then(function (r) { return r.text() })
+      .then(function (t) {
+        var vars = parseVars(t)
+        for (var k in vars) {
+          if (k.indexOf('cityDZ') === 0 && vars[k] && vars[k].weatherinfo) { DZ = vars[k].weatherinfo; break }
+        }
+        render()
+      })
+      .catch(function () { /* 保留上一次数据 */ })
+  }
+
+  function applyConfig(cfg) {
+    var code = (cfg && cfg.cityCode) || ''
+    var changed = code !== CITY_CODE
+    CITY_CODE = code
+    CITY_NAME = (cfg && cfg.cityName) || ''
+    if (changed) { SK = null; DZ = null }   // 换城市时丢弃旧数据，避免短暂显示上一个城市
+    render()
+    if (changed) load()
+  }
+
   window.addEventListener('message', function (e) {
     var msg = e.data || {}
-    if (msg.type === 'workbench:init' || msg.type === 'workbench:tick') render()
+    if (msg.type === 'workbench:init') {
+      document.documentElement.dataset.theme = msg.payload.theme
+      applyConfig(msg.payload.config)
+    }
+    if (msg.type === 'workbench:config') applyConfig(msg.payload)
     if (msg.type === 'workbench:theme') document.documentElement.dataset.theme = msg.payload.theme
+    if (msg.type === 'workbench:tick') load()
   })
+
   parent.postMessage({ type: 'plugin:ready', payload: { id: 'workbench.weather' } }, '*')
   render()
 </script>

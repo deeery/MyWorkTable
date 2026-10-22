@@ -11,9 +11,6 @@ export function Profile({ onNavigate }: { onNavigate: (p: PageKey) => void }) {
 
   return (
     <>
-      <div className="page-title">我的</div>
-      <div className="page-desc">账号状态与本地数据概览（演示环境使用本地 Mock 登录，可替换为真实 OAuth）。</div>
-
       <div className="panel">
         {profile ? (
           <>

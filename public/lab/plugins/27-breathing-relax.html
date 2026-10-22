@@ -1,0 +1,404 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>呼吸放松 · 4-7-8 呼吸法</title>
+<link rel="stylesheet" href="../assets/theme.css">
+<link rel="stylesheet" href="../assets/compact.css">
+<style>
+  :root { --accent: #14b8a6; --accent-2: #2dd4bf; }
+
+  .win { --phase: var(--accent); }
+  .breath-stage {
+    position: relative; height: 210px; border-radius: var(--radius-sm); overflow: hidden;
+    display: grid; place-items: center; border: 1px solid var(--border);
+    background:
+      radial-gradient(120% 90% at 50% 110%, color-mix(in srgb, var(--phase) 34%, transparent), transparent 70%),
+      linear-gradient(160deg, color-mix(in srgb, var(--phase) 16%, transparent), transparent 60%),
+      var(--surface-2);
+    transition: background .8s ease;
+  }
+  .halo {
+    position: absolute; width: 168px; height: 168px; border-radius: 50%;
+    border: 1px dashed color-mix(in srgb, var(--phase) 45%, transparent);
+    animation: spin 26s linear infinite;
+  }
+  /* 外层只负责待机浮动，内层只负责呼吸缩放，避免两个 transform 打架 */
+  .orb-wrap { display: grid; place-items: center; }
+  .orb-wrap.idle { animation: float 4.6s ease-in-out infinite; }
+  .orb {
+    width: 160px; height: 160px; border-radius: 50%; position: relative;
+    display: grid; place-items: center; text-align: center; color: #fff;
+    background: radial-gradient(circle at 34% 28%,
+      color-mix(in srgb, var(--phase) 78%, #fff), var(--phase) 68%);
+    box-shadow: 0 18px 44px -16px var(--phase), inset 0 0 30px rgba(255, 255, 255, .28);
+    transform: scale(.62);
+    transition: transform .12s linear, background .6s ease, box-shadow .6s ease;
+    will-change: transform;
+  }
+  .orb b { display: block; font-size: 17px; font-weight: 700; letter-spacing: 1px; }
+  .orb span { display: block; font-size: 12px; opacity: .9; margin-top: 3px; font-variant-numeric: tabular-nums; }
+  .breath-stage .tip { position: absolute; bottom: 9px; font-size: 10.5px; color: var(--muted); }
+  .plist { display: flex; gap: 6px; }
+  .plist i { flex: 1; height: 4px; border-radius: 99px; background: color-mix(in srgb, var(--muted) 24%, transparent); }
+  .plist i.on { background: var(--phase); }
+</style>
+</head>
+<body>
+<div class="win" id="win" style="--w:400px">
+  <header class="win-head">
+    <div class="lights"><i></i><i></i><i></i></div>
+    <div class="win-title"><span class="ico">🌬️</span>呼吸放松<span class="win-sub">跟着圆圈呼吸</span></div>
+    <div class="spacer"></div>
+    <span class="badge" id="badge">待开始</span>
+  </header>
+
+  <div class="win-body">
+    <div class="tabs" id="modes">
+      <button class="active" data-mode="478">4-7-8</button>
+      <button data-mode="444">4-4-4</button>
+      <button data-mode="box">盒式呼吸</button>
+    </div>
+
+    <div class="breath-stage" id="stage">
+      <div class="halo"></div>
+      <div class="orb-wrap idle" id="orbWrap">
+        <div class="orb" id="orb"><div><b id="phase">准备好了吗</b><span id="count">按开始</span></div></div>
+      </div>
+      <span class="tip" id="modeName">4-7-8 呼吸法 · 吸气 4s / 屏息 7s / 呼气 8s</span>
+    </div>
+
+    <div class="card col">
+      <div class="row between">
+        <span class="small bold" id="phaseHint">等待开始</span>
+        <span class="tiny muted" id="cycleInfo">已完成 0 个循环</span>
+      </div>
+      <div class="plist" id="plist"><i></i><i></i><i></i><i></i></div>
+      <div class="bar thin"><i id="phaseBar" style="width:0%"></i></div>
+    </div>
+
+    <div class="stats">
+      <div class="card stat"><b id="sCycle">0</b><span>完成循环</span></div>
+      <div class="card stat"><b id="sSec">00:00</b><span>本次时长</span></div>
+      <div class="card stat"><b id="sToday">0 分</b><span>今日练习</span></div>
+    </div>
+
+    <div class="btns">
+      <button class="btn primary grow" id="start">▶ 开始呼吸</button>
+      <button class="btn grow" id="pause" disabled>⏸ 暂停</button>
+      <button class="btn danger" id="stop">■ 结束</button>
+      <button class="btn icon" id="sound" title="阶段提示音开关">🔔</button>
+    </div>
+
+    <div class="row between">
+      <span class="small bold">练习记录</span>
+      <span class="tiny muted" id="logTip">最近 5 次</span>
+    </div>
+    <div class="list scroll" id="logs" style="--scroll-h:118px"></div>
+  </div>
+
+  <footer class="win-foot">
+    <span class="dot" id="live"></span><span id="foot">准备就绪，随时可以开始喵~</span>
+    <div class="spacer" style="flex:1"></div>
+    <span class="tiny">预览版 · 数据存本地</span>
+  </footer>
+</div>
+
+<script src="../assets/pl.js"></script>
+<script src="../assets/compact.js"></script>
+<script>
+(function () {
+  const { $, $$, toast, store, pad, today } = PL;
+
+  /* 阶段定义：[阶段名, 秒数, 起始缩放, 结束缩放, 类型] */
+  const MODES = {
+    '478': {
+      name: '4-7-8 呼吸法', hint: '吸气 4s / 屏息 7s / 呼气 8s',
+      phases: [['吸气', 4, .62, 1, 'in'], ['屏息', 7, 1, 1, 'hold'], ['呼气', 8, 1, .62, 'out']]
+    },
+    '444': {
+      name: '4-4-4 呼吸法', hint: '吸气 4s / 屏息 4s / 呼气 4s',
+      phases: [['吸气', 4, .62, 1, 'in'], ['屏息', 4, 1, 1, 'hold'], ['呼气', 4, 1, .62, 'out']]
+    },
+    'box': {
+      name: '盒式呼吸', hint: '吸 4s / 屏 4s / 呼 4s / 屏 4s',
+      phases: [['吸气', 4, .62, 1, 'in'], ['屏息', 4, 1, 1, 'hold'], ['呼气', 4, 1, .62, 'out'], ['屏息', 4, .62, .62, 'hold']]
+    }
+  };
+  const TINT = { in: '#14b8a6', hold: '#8b5cf6', out: '#0ea5e9' };
+
+  let modeKey = store.get('br-mode', '478');
+  let soundOn = store.get('br-sound', true);
+  let logs = store.get('br-logs', []);                 // [{ at, mode, cycles, sec }]
+  let running = false, paused = false;
+  let idx = 0, elapsed = 0, cycles = 0, session = 0, lastAt = 0;
+
+  const phases = () => MODES[modeKey].phases;
+
+  /* ---------- 绘制 ---------- */
+  function paint() {
+    /* 未开始时显示待机态，不要提前剧透「吸气」 */
+    if (!running && session === 0) {
+      $('#orb').style.transform = 'scale(.62)';
+      $('#phase').textContent = '准备好了吗';
+      $('#count').textContent = '按开始';
+      $('#phaseBar').style.width = '0%';
+      $('#win').style.setProperty('--phase', TINT.in);
+      $$('#plist i').forEach(el => el.classList.remove('on'));
+      $('#cycleInfo').textContent = '已完成 0 个循环';
+      $('#sCycle').textContent = 0;
+      $('#sSec').textContent = '00:00';
+      $('#sToday').textContent = todayMinutes() + ' 分';
+      return;
+    }
+
+    const ph = phases()[idx];
+    const rest = Math.max(0, ph[1] - elapsed);
+    const p = Math.min(1, elapsed / ph[1]);
+    const scale = ph[2] + (ph[3] - ph[2]) * p;
+
+    $('#orb').style.transform = 'scale(' + scale.toFixed(3) + ')';
+    $('#phase').textContent = ph[0];
+    $('#count').textContent = Math.ceil(rest) + 's';
+    $('#phaseHint').textContent = ph[0] + '中 · 还剩 ' + Math.ceil(rest) + ' 秒';
+    $('#phaseBar').style.width = (p * 100).toFixed(1) + '%';
+    $('#win').style.setProperty('--phase', TINT[ph[4]] || TINT.in);
+
+    $$('#plist i').forEach((el, i) => el.classList.toggle('on', i <= idx));
+    $('#cycleInfo').textContent = '已完成 ' + cycles + ' 个循环';
+    $('#sCycle').textContent = cycles;
+    $('#sSec').textContent = pad(Math.floor(session / 60)) + ':' + pad(Math.floor(session % 60));
+    $('#sToday').textContent = todayMinutes() + ' 分';
+  }
+
+  function todayMinutes() {
+    const d = today();
+    const past = logs.filter(l => (l.at || '').slice(0, 10) === d).reduce((s, l) => s + (l.sec || 0), 0);
+    return Math.floor((past + session) / 60);
+  }
+
+  function renderLogs() {
+    const box = $('#logs');
+    box.innerHTML = '';
+    if (!logs.length) { box.innerHTML = '<div class="empty">今天还没有练习记录喵~</div>'; return; }
+    logs.slice(0, 5).forEach(l => {
+      const m = MODES[l.mode] || MODES['478'];
+      const el = document.createElement('div');
+      el.className = 'item';
+      el.innerHTML = '<div class="av">🌬️</div>' +
+        '<div class="grow"><div class="t">' + m.name + ' · ' + l.cycles + ' 个循环</div>' +
+        '<div class="s">' + (l.at || '').slice(11, 16) + ' · 时长 ' + PL.fmtTime(l.sec) + '</div></div>' +
+        '<span class="badge ok">已完成</span>';
+      box.appendChild(el);
+    });
+  }
+
+  /* ---------- 阶段切换 ---------- */
+  function onPhaseChange(entering) {
+    const ph = phases()[idx];
+    if (soundOn && entering) PL.beep(ph[4] === 'in' ? 620 : ph[4] === 'out' ? 420 : 780, .16, 'sine');
+  }
+
+  /* ---------- 主循环 ---------- */
+  /* 主循环是 100ms 一帧，精简组件没必要跟着每帧重绘：节流到 0.5s 一次 */
+  let lastCwAt = 0;
+  function loop() {
+    const now = Date.now();
+    const dt = lastAt ? Math.min(.4, (now - lastAt) / 1000) : 0;
+    lastAt = now;
+    if (now - lastCwAt >= 500) { lastCwAt = now; PL.compactRefreshAll(); }
+    if (!running || paused) return;
+
+    elapsed += dt;
+    session += dt;
+
+    let ph = phases()[idx];
+    while (elapsed >= ph[1]) {
+      elapsed -= ph[1];
+      idx = (idx + 1) % phases().length;
+      if (idx === 0) cycles++;
+      onPhaseChange(true);
+      ph = phases()[idx];
+    }
+    paint();
+  }
+  setInterval(loop, 100);
+
+  /* ---------- 控制 ---------- */
+  function setRunning(on) {
+    running = on;
+    $('#start').classList.toggle('hidden', on);
+    $('#pause').disabled = !on;
+    $('#pause').textContent = paused ? '▶ 继续' : '⏸ 暂停';
+    $('#orbWrap').classList.toggle('idle', !on);
+    $('#badge').textContent = on ? (paused ? '已暂停' : '呼吸中') : '待开始';
+    $('#live').classList.toggle('live', on && !paused);
+    $('#foot').textContent = on ? (paused ? '已暂停，深呼吸一下再继续喵~' : '跟着圆圈慢慢呼吸喵~') : '准备就绪，随时可以开始喵~';
+  }
+
+  $('#start').onclick = () => {
+    if (running) return;
+    running = true; paused = false;
+    if (session === 0) { idx = 0; elapsed = 0; cycles = 0; }
+    lastAt = 0;
+    PL.chime();
+    setRunning(true);
+    paint();
+  };
+
+  $('#pause').onclick = () => {
+    if (!running) return;
+    paused = !paused;
+    lastAt = 0;
+    setRunning(true);
+    toast(paused ? '已暂停，休息一下喵' : '继续呼吸~', 'info');
+  };
+
+  $('#stop').onclick = () => {
+    if (!running && session < 1) { toast('还没有开始呢喵~', 'warn'); return; }
+    const sec = Math.round(session);
+    if (sec >= 5) {
+      logs.unshift({ at: new Date().toISOString(), mode: modeKey, cycles: cycles, sec: sec });
+      logs = logs.slice(0, 20);
+      store.set('br-logs', logs);
+      toast('本次练习完成：' + cycles + ' 个循环 · ' + PL.fmtTime(sec), 'ok');
+    } else {
+      toast('练习时间太短，没有记录喵', 'warn');
+    }
+    running = false; paused = false;
+    idx = 0; elapsed = 0; cycles = 0; session = 0;
+    $('#orb').style.transform = 'scale(.62)';
+    $('#phase').textContent = '准备好了吗';
+    $('#count').textContent = '按开始';
+    $('#phaseHint').textContent = '等待开始';
+    $('#phaseBar').style.width = '0%';
+    $('#cycleInfo').textContent = '已完成 0 个循环';
+    $('#sCycle').textContent = 0;
+    $('#sSec').textContent = '00:00';
+    setRunning(false);
+    renderLogs();
+    paint();
+  };
+
+  $('#sound').onclick = () => {
+    soundOn = !soundOn;
+    store.set('br-sound', soundOn);
+    $('#sound').textContent = soundOn ? '🔔' : '🔕';
+    $('#sound').classList.toggle('ghost', !soundOn);
+    toast(soundOn ? '阶段提示音已开启' : '阶段提示音已关闭', soundOn ? 'ok' : 'warn');
+    if (soundOn) PL.beep(700, .12);
+  };
+
+  $$('#modes button').forEach(b => b.onclick = () => {
+    modeKey = b.dataset.mode || '478';
+    store.set('br-mode', modeKey);
+    $$('#modes button').forEach(x => x.classList.toggle('active', x === b));
+    idx = 0; elapsed = 0;
+    const m = MODES[modeKey];
+    $('#modeName').textContent = m.name + ' · ' + m.hint;
+    $('#plist').innerHTML = m.phases.map(() => '<i></i>').join('');
+    if (!running) { $('#phaseHint').textContent = m.name + ' · 等待开始'; }
+    paint();
+    toast('已切换到「' + m.name + '」', 'info');
+  });
+
+  /* ---------- 初始化 ---------- */
+  $('#sound').textContent = soundOn ? '🔔' : '🔕';
+  $$('#modes button').forEach(x => x.classList.toggle('active', x.dataset.mode === modeKey));
+  $('#modeName').textContent = MODES[modeKey].name + ' · ' + MODES[modeKey].hint;
+  $('#plist').innerHTML = phases().map(() => '<i></i>').join('');
+  renderLogs();
+  setRunning(false);
+  paint();
+
+  /* ============================================================
+     桌面精简形态：呼吸阶段环 / 周期计数 / 阶段时钟
+     ============================================================ */
+  const cwf = PL.cwf;
+
+  PL.compact({
+    id: 'breathing-relax',
+    name: '呼吸放松',
+    icon: '🌬️',
+    defFormat: 'ring',
+    defSize: 'square',
+    data: () => ({
+      running, paused, cycles, session, idx, elapsed,
+      ph: phases()[idx] || null,
+      modeName: MODES[modeKey].name,
+      todayMin: todayMinutes(),
+    }),
+    formats: [
+      {
+        id: 'ring',
+        name: '呼吸阶段环',
+        icon: '🫧',
+        options: [
+          { key: 'showSec', type: 'bool', label: '显示剩余秒数', def: true },
+          { key: 'idleText', type: 'text', label: '待机文字', def: '准备好了吗' },
+        ],
+        render: (o, d) => {
+          /* 未开始时显示待机态，不要提前剧透「吸气」 */
+          if (!d.running && d.session === 0) {
+            return cwf.ring({ pct: 0, label: o.idleText || '准备好了吗' });
+          }
+          const ph = d.ph;
+          const rest = Math.max(0, Math.ceil((ph ? ph[1] : 1) - d.elapsed));
+          const pct = ph ? Math.min(100, d.elapsed / ph[1] * 100) : 0;
+          const tail = o.showSec === false ? '' : (d.paused ? ' · 已暂停' : ' · 剩 ' + rest + 's');
+          return cwf.ring({ pct: pct, label: (ph ? ph[0] : '呼吸') + tail });
+        },
+      },
+      {
+        id: 'stat',
+        name: '周期计数',
+        icon: '🔢',
+        options: [
+          { key: 'scope', type: 'select', label: '统计口径', def: 'cycle',
+            options: [
+              { value: 'cycle', label: '完成循环' },
+              { value: 'today', label: '今日练习' },
+              { value: 'session', label: '本次时长' },
+            ] },
+          { key: 'label', type: 'text', label: '标签文字', def: '呼吸循环' },
+        ],
+        render: (o, d) => {
+          if (o.scope === 'today') return cwf.stat({ value: d.todayMin, unit: '分', name: '今日练习' });
+          if (o.scope === 'session') return cwf.stat({ value: Math.round(d.session), unit: '秒', name: '本次时长' });
+          return cwf.stat({ value: d.cycles, unit: '个', name: o.label || '呼吸循环' });
+        },
+      },
+      {
+        id: 'clock',
+        name: '阶段时钟',
+        icon: '⏱️',
+        options: [
+          { key: 'showSec', type: 'bool', label: '显示本阶段剩余', def: true },
+          { key: 'name', type: 'select', label: '下方显示', def: 'phase',
+            options: [
+              { value: 'phase', label: '当前阶段' },
+              { value: 'mode', label: '呼吸法名称' },
+            ] },
+        ],
+        render: (o, d) => {
+          /* 未开始时同样显示待机态，不要提前剧透「吸气」 */
+          if (!d.running) {
+            const idleNm = o.name === 'mode' ? d.modeName : '待开始';
+            return cwf.clock({ time: '00:00', sec: o.showSec === false ? false : '按开始', name: idleNm });
+          }
+          const nm = o.name === 'mode' ? d.modeName : (d.ph ? d.ph[0] : '呼吸');
+          const rest = d.ph ? Math.max(0, Math.ceil(d.ph[1] - d.elapsed)) : 0;
+          return cwf.clock({
+            time: pad(Math.floor(d.session / 60)) + ':' + pad(Math.floor(d.session % 60)),
+            sec: o.showSec === false ? false : '还剩 ' + rest + 's',
+            name: nm,
+          });
+        },
+      },
+    ],
+  });
+})();
+</script>
+</body>
+</html>

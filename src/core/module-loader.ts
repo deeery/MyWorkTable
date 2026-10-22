@@ -6,6 +6,7 @@
  *   export default function create(ctx) { return { mount, unmount, onTick... } }
  */
 import type { PluginContext, PluginFactory, PluginInstance } from '../types/plugin'
+import { resolveAppUrl } from './url'
 
 /**
  * 用 new Function 构造原生动态 import，绕过构建器对动态 import 的
@@ -14,7 +15,9 @@ import type { PluginContext, PluginFactory, PluginInstance } from '../types/plug
 const nativeImport = new Function('url', 'return import(url)') as (url: string) => Promise<{ default?: unknown }>
 
 export async function loadModulePlugin(url: string, ctx: PluginContext): Promise<PluginInstance> {
-  const mod = await nativeImport(url)
+  // 以 '/' 开头的入口需按应用根目录解析，否则 file:// 下会指向磁盘根目录而加载失败
+  const resolved = resolveAppUrl(url)
+  const mod = await nativeImport(resolved)
   const factory = mod.default
   if (typeof factory !== 'function') {
     throw new Error(`插件 ${url} 未导出 default 工厂函数`)

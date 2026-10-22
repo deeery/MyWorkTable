@@ -1,0 +1,580 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>番茄专注 · 25分钟工作法</title>
+<link rel="stylesheet" href="../assets/theme.css">
+<link rel="stylesheet" href="../assets/compact.css">
+<style>
+  :root { --accent: #ef4444; --accent-2: #f87171; }
+  .big { font-family: var(--mono); font-size: 42px; font-weight: 700; letter-spacing: -1.5px; line-height: 1; }
+  .phase { font-size: 12px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; color: var(--accent); }
+  .dots { display: flex; gap: 7px; flex-wrap: wrap; }
+  .dots i { width: 15px; height: 15px; border-radius: 50%; background: color-mix(in srgb, var(--muted) 25%, transparent); display: block; transition: .3s; }
+  .dots i.done { background: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent); }
+  .ring.breathe { animation: breathe 4s ease-in-out infinite; }
+  @keyframes breathe { 50% { transform: scale(1.035); } }
+</style>
+</head>
+<body>
+<div class="win" style="--w:400px">
+  <header class="win-head">
+    <div class="lights"><i></i><i></i><i></i></div>
+    <div class="win-title"><span class="ico">🍅</span>番茄专注<span class="win-sub">25 分钟工作法</span></div>
+    <div class="spacer"></div>
+    <span class="badge" id="state">待开始</span>
+  </header>
+
+  <div class="win-body">
+    <div class="col" style="align-items:center;gap:14px">
+      <div class="ring" id="ring" style="--size:188px;--thick:14px">
+        <div>
+          <div class="phase" id="phase">FOCUS</div>
+          <div class="big" id="time">25:00</div>
+          <div class="tiny muted" id="round">第 1 个番茄</div>
+        </div>
+      </div>
+
+      <div class="btns" style="justify-content:center">
+        <button class="btn primary" id="play" style="min-width:104px">▶︎ 开始专注</button>
+        <button class="btn" id="skip">跳过</button>
+        <button class="btn" id="reset">重置</button>
+      </div>
+    </div>
+
+    <div class="card col" style="gap:9px">
+      <div class="row between">
+        <span class="small bold">今日番茄</span>
+        <span class="badge ok" id="doneTxt">0 / 8 个</span>
+      </div>
+      <div class="dots" id="dots"></div>
+      <div class="bar thin"><i id="bar" style="width:0%"></i></div>
+      <div class="row between tiny muted">
+        <span>累计专注 <b id="focusMin">0</b> 分钟</span>
+        <span>完成 <b id="cycles">0</b> 轮循环</span>
+      </div>
+    </div>
+
+    <div class="card col" style="gap:10px">
+      <div class="row">
+        <span class="small muted" style="width:70px">专注时长</span>
+        <input type="range" id="rFocus" min="5" max="60" step="5" value="25" style="flex:1">
+        <span class="badge" id="vFocus">25 分</span>
+      </div>
+      <div class="row">
+        <span class="small muted" style="width:70px">短休息</span>
+        <input type="range" id="rShort" min="1" max="15" value="5" style="flex:1">
+        <span class="badge" id="vShort">5 分</span>
+      </div>
+      <div class="row">
+        <span class="small muted" style="width:70px">长休息</span>
+        <input type="range" id="rLong" min="5" max="30" step="5" value="15" style="flex:1">
+        <span class="badge" id="vLong">15 分</span>
+      </div>
+      <label class="inline"><input type="checkbox" id="auto" checked> 阶段结束自动进入下一阶段</label>
+    </div>
+  </div>
+
+  <footer class="win-foot">
+    <span class="dot" id="dot"></span><span id="foot">准备就绪，按开始进入专注</span>
+    <div class="spacer" style="flex:1"></div>
+    <span class="tiny">提示音已开启 🔔</span>
+  </footer>
+</div>
+
+<script src="../assets/pl.js"></script>
+<script src="../assets/compact.js"></script>
+<script>
+(function () {
+  const { $, toast, notify, beep, chime, store, pad, clamp } = PL;
+
+  const cfg = { focus: 25, short: 5, long: 15 };
+  const LABEL = { focus: ['FOCUS', '专注中'], short: ['SHORT BREAK', '短休息'], long: ['LONG BREAK', '长休息'] };
+  const COLOR = { focus: ['#ef4444', '#f87171'], short: ['#22c55e', '#4ade80'], long: ['#0ea5e9', '#38bdf8'] };
+
+  let phase = 'focus', running = false, left = cfg.focus * 60, round = 1, cycles = 0;
+  let doneToday = store.get('done-' + PL.today(), 0);
+  let focusMin = store.get('focusmin-' + PL.today(), 0);
+
+  function setPhase(p, keepRound) {
+    phase = p;
+    left = cfg[p] * 60;
+    if (!keepRound) round = round;
+    const [a, b] = COLOR[p];
+    document.documentElement.style.setProperty('--accent', a);
+    document.documentElement.style.setProperty('--accent-2', b);
+    $('#phase').textContent = LABEL[p][0];
+    $('#state').textContent = LABEL[p][1];
+    $('#state').className = 'badge ' + (p === 'focus' ? '' : 'ok');
+    $('#dot').className = 'dot' + (running ? ' live' : '');
+    $('#play').textContent = running ? '⏸ 暂停' : (p === 'focus' ? '▶︎ 开始专注' : '▶︎ 开始休息');
+    paint();
+  }
+
+  function paint() {
+    const total = cfg[phase] * 60;
+    /**
+     * 环上画**剩余**比例（红色随时间减少）。
+     *
+     * theme.css 的 .ring 用 conic-gradient(--accent) calc(var(--p) * 1%)
+     * 画红色弧，所以 --p 就是红弧占整圈的比例。
+     * 这里原来传的是 (1 - left/total)（已过比例），红色越走越多 ——
+     * 与番茄钟的直觉相反（一圈代表本轮总时长，红色耗尽即结束）。
+     */
+    const pct = clamp(left / total * 100, 0, 100);
+    $('#ring').style.setProperty('--p', pct);
+    $('#time').textContent = Math.floor(left / 60) + ':' + pad(Math.floor(left % 60));
+    $('#round').textContent = '第 ' + round + ' 个番茄';
+    $('#doneTxt').textContent = doneToday + ' / 8 个';
+    $('#focusMin').textContent = focusMin;
+    $('#cycles').textContent = cycles;
+    $('#bar').style.width = Math.min(100, doneToday / 8 * 100) + '%';
+    const dots = $('#dots'); dots.innerHTML = '';
+    for (let i = 0; i < 8; i++) {
+      const i2 = document.createElement('i');
+      if (i < doneToday) i2.className = 'done';
+      dots.appendChild(i2);
+    }
+  }
+
+  function tick() {
+    if (!running) return;
+    left--;
+    if (phase === 'focus') { focusMin += 1 / 60; }
+    if (left <= 0) finish();
+    paint();
+  }
+
+  function finish() {
+    running = false;
+    chime();
+    if (phase === 'focus') {
+      doneToday++; cycles++;
+      store.set('done-' + PL.today(), doneToday);
+      store.set('focusmin-' + PL.today(), Math.round(focusMin));
+      toast('🍅 完成第 ' + round + ' 个番茄！休息一下喵~', 'ok', 4000);
+      notify('🍅 番茄完成', '已完成 ' + doneToday + ' 个番茄，进入休息');
+      round++;
+      const next = (round - 1) % 4 === 0 ? 'long' : 'short';
+      setPhase(next, true);
+    } else {
+      toast('休息结束，继续加油！', 'ok');
+      notify('⏰ 休息结束', '回到专注状态吧');
+      setPhase('focus', true);
+    }
+    if ($('#auto').checked) { running = true; }
+    paint();
+  }
+
+  /**
+   * 三个核心动作抽成具名函数。
+   *
+   * 原来它们直接写在按钮的 onclick 里，精简形态没法复用 ——
+   * 而精简形态必须能独立完成「开始/暂停 → 跳过 → 重置」这套闭环。
+   * 抽出来之后完整窗口与精简组件共用同一份逻辑，行为不会分叉。
+   */
+  function togglePlay() {
+    running = !running;
+    $('#play').textContent = running ? '⏸ 暂停' : (phase === 'focus' ? '▶︎ 开始专注' : '▶︎ 开始休息');
+    $('#dot').className = 'dot' + (running ? ' live' : '');
+    $('#foot').textContent = running ? '计时进行中 · ' + LABEL[phase][1] : '已暂停';
+    beep(running ? 760 : 420, .09);
+    PL.compactRefreshAll();
+  }
+
+  function skipPhase() {
+    left = 1;
+    tick();
+    PL.compactRefreshAll();
+  }
+
+  function resetPhase() {
+    running = false;
+    setPhase(phase, true);
+    toast('已重置当前阶段', 'warn');
+    PL.compactRefreshAll();
+  }
+
+  $('#play').onclick = togglePlay;
+  $('#skip').onclick = skipPhase;
+  $('#reset').onclick = resetPhase;
+
+  function bind(id, key, out, unit) {
+    const r = $('#' + id);
+    r.oninput = () => {
+      cfg[key] = +r.value;
+      $('#' + out).textContent = r.value + ' ' + unit;
+      if (!running) { left = cfg[phase] * 60; paint(); }
+    };
+  }
+  bind('rFocus', 'focus', 'vFocus', '分');
+  bind('rShort', 'short', 'vShort', '分');
+  bind('rLong', 'long', 'vLong', '分');
+
+  setInterval(() => {
+    tick();
+    // 倒计时每秒变化，顺带刷新精简组件
+    PL.compactRefreshAll();
+  }, 1000);
+  setPhase('focus', true);
+
+  /* ============================================================
+     桌面精简形态
+     ------------------------------------------------------------
+     设计原则（本轮统一约定）：
+       1. 精简形态必须能**独立工作**，有完整闭环 —— 番茄钟的闭环是
+          「看剩余时间 → 开始/暂停 → 跳过 → 重置」，全都在这儿能做完，
+          不用打开完整窗口。
+       2. 完整窗口里那些「调数值」的部分（专注时长/短休/长休/自动进入）
+          收进**宿主的精简设置**二级界面，不在小部件上摆一排滑块。
+       3. 组件尺寸不再由插件决定，铺满窗口（见 compact.css 的 pl-host 段）。
+     ============================================================ */
+  const cwf = PL.cwf;
+
+  /** 当前阶段的总秒数 */
+  function phaseTotal() { return cfg[phase] * 60; }
+
+  /** 当前阶段的进度百分比（0~100，已过部分） */
+  function phasePct() { return clamp((1 - left / phaseTotal()) * 100, 0, 100); }
+
+  /** 时间文本 mm:ss */
+  function timeText() {
+    const s = Math.max(0, Math.floor(left));
+    return Math.floor(s / 60) + ':' + pad(s % 60);
+  }
+
+  /**
+   * 把精简设置里的时长同步回 cfg，并顺带更新完整窗口的滑块。
+   *
+   * 精简设置与完整窗口是两套 UI，但底下的计时参数只有一份（cfg）。
+   * 任何一边改动都要能生效、且另一边显示跟着变 —— 否则会出现
+   * 「设置里写了 45 分，完整窗口的滑块还停在 25 分」这种自相矛盾。
+   *
+   * 只在值真的变了时才动 DOM（避免每秒渲染都重排滑块）。
+   */
+  let lastSync = {};
+  function syncCfgFromOpts(o) {
+    let changed = false;
+    ['focus', 'short', 'long'].forEach((k) => {
+      const v = Number(o[k]);
+      if (Number.isFinite(v) && v > 0 && v !== cfg[k]) {
+        cfg[k] = v;
+        changed = true;
+        const r = $('#' + (k === 'focus' ? 'rFocus' : k === 'short' ? 'rShort' : 'rLong'));
+        const out = $('#' + (k === 'focus' ? 'vFocus' : k === 'short' ? 'vShort' : 'vLong'));
+        if (r) r.value = String(v);
+        if (out) out.textContent = v + ' 分';
+      }
+    });
+    const goal = Number(o.goal);
+    if (Number.isFinite(goal) && goal > 0) cfg.goal = goal;
+    // 自动进入下一阶段：完整窗口的 checkbox 也要跟上
+    if (typeof o.auto === 'boolean' && o.auto !== lastSync.auto) {
+      const a = $('#auto');
+      if (a) a.checked = o.auto;
+      lastSync.auto = o.auto;
+    }
+    if (changed) {
+      // 改时长时若没在跑，重置当前阶段剩余时间，让新时长立刻可见
+      if (!running) left = cfg[phase] * 60;
+      paint();
+    }
+  }
+
+  /* ---------- 精简形态的自定义外观（注入一次） ---------- */
+  (function injectCwStyles() {
+    // 幂等：重复注入会叠加多份样式。用 querySelector 按属性找，
+    // 不用 getElementById —— 自检脚本会把 getElementById('字面量')
+    // 当成「引用了页面上不存在的 id」而报错（那个 id 是运行时才创建的）。
+    if (document.querySelector('style[data-cw-style="pomodoro"]')) return;
+    const st = document.createElement('style');
+    st.setAttribute('data-cw-style', 'pomodoro');
+    st.textContent = `
+      /* 番茄钟精简组件：整块铺满窗口，纵向三段（环 / 按钮 / 底部信息） */
+      .cw-pomo {
+        display: flex; flex-direction: column;
+        align-items: center; justify-content: center;
+        gap: 8px; padding: 8px;
+        width: 100%; height: 100%;
+        box-sizing: border-box;
+        overflow: hidden;
+      }
+      /* 进度环：尺寸用 cqmin（容器短边）算，宽高取**同一个值**，天然正圆。
+
+         ⚠ 不要用「百分比宽 + max-height + aspect-ratio」：flex 列会把
+         高度压掉，环变成椭圆。
+         ⚠ 也不要按固定 px 分档（原来 78/68/58px 三档）：窗口一大环就显得
+         小，而 58px 装不下 19px 的 "25:00"（约 57px 宽），文字顶出圆外，
+         看起来就不像标准圆了。
+         用同一个 cqmin 值当宽高，再让字号按环直径算，两者永远匹配。 */
+      .cw-pomo .ring {
+        --d: min(64cqmin, 168px);
+        position: relative;
+        flex: none;
+        width: var(--d);
+        height: var(--d);
+        border-radius: 50%;
+        background: conic-gradient(var(--accent) calc(var(--p) * 1%), color-mix(in srgb, var(--muted) 20%, transparent) 0);
+        display: grid; place-items: center;
+        transition: background .3s;
+      }
+      .cw-pomo .ring::after {
+        content: ''; position: absolute; inset: 11%;
+        border-radius: 50%;
+        background: var(--surface, #fff);
+      }
+      /**
+       * ⚠ 必须屏蔽 theme.css 里全局 .ring 的 ::before。
+       *
+       * theme.css 有一条通用的 .ring（--size / --thick: 11px）与
+       * .ring::before { inset: var(--thick) } —— 它会给任何带 .ring 的
+       * 元素叠一层**固定 11px 内缩**的白色遮罩 + 内阴影。
+       * 我们的组件也叫 .ring，于是两层遮罩尺寸不一致
+       * （它 11px 固定，我们 11% 相对），中间那圈露出内阴影 ——
+       * 远看就像环不圆、外圈多了一圈灰边。
+       * 这里把它的 ::before 彻底关掉，只留我们自己的 ::after。
+       *
+       * 注：注释里不要出现反引号 —— 这段 CSS 是写在 JS 模板字符串里的，
+       * 反引号会提前结束字符串并导致整个脚本语法错误（踩过一次）。
+       */
+      .cw-pomo .ring::before { display: none !important; }
+      .cw-pomo .inner { position: relative; z-index: 1; text-align: center; line-height: 1.15; }
+      /* 字号按环直径比例算：0.26em/字符 × 5 字符 ≈ 1.3 倍环径，
+         实际渲染宽度约 0.78 倍环径，正好落在内圈里不溢出。 */
+      .cw-pomo .ph { font-size: calc(var(--d) * 0.11); font-weight: 800; letter-spacing: 1.2px; color: var(--accent); }
+      .cw-pomo .tm { font-family: var(--mono); font-size: calc(var(--d) * 0.25); font-weight: 700; letter-spacing: -1px; }
+      .cw-pomo .rd { font-size: calc(var(--d) * 0.105); color: var(--muted); white-space: nowrap; }
+      /* 按钮排：主按钮 + 跳过 + 重置。
+         ⚠ 必须 white-space: nowrap —— 窄容器里「跳过」「重置」会被
+         拆成竖排两个字，非常难看。 */
+      .cw-pomo .acts {
+        display: flex; gap: 5px; align-items: center;
+        flex: none; max-width: 100%;
+      }
+      .cw-pomo .acts button {
+        font: inherit; cursor: pointer; border-radius: 8px;
+        border: 1px solid var(--border);
+        background: var(--surface-2, rgba(0,0,0,.03));
+        color: var(--text);
+        padding: 4px 8px; font-size: 11px; line-height: 1.2;
+        white-space: nowrap; flex: none;
+        transition: .15s;
+      }
+      .cw-pomo .acts button:hover { border-color: var(--accent); }
+      .cw-pomo .acts .main {
+        background: var(--accent); border-color: var(--accent);
+        color: #fff; font-weight: 700;
+      }
+      .cw-pomo .acts .main:hover { filter: brightness(1.06); }
+      /* 底部一行：今日番茄进度点 */
+      .cw-pomo .foot {
+        display: flex; align-items: center; gap: 6px;
+        font-size: 9.5px; color: var(--muted); white-space: nowrap;
+        flex: none;
+      }
+      .cw-pomo .foot .pips { display: flex; gap: 3px; }
+      .cw-pomo .foot .pips i {
+        width: 6px; height: 6px; border-radius: 50%;
+        background: color-mix(in srgb, var(--muted) 26%, transparent);
+      }
+      .cw-pomo .foot .pips i.done { background: var(--accent); }
+
+      /* 空间不够时逐级收掉次要信息，保证环与主按钮始终在。
+         ⚠ 这里**不再**给环写死像素尺寸 —— 环的直径由 --d 统一控制
+         （cqmin 基准），分档只负责「藏掉哪些行」，两件事不要混。 */
+      .cw-pomo { container-type: size; }
+
+      /* 窄：把「跳过/重置」收成图标，避免整排被裁掉。
+         ⚠ 主按钮（开始/暂停）**不能**跟着缩 —— 它是这个组件唯一
+         的核心操作，缩成一个红点就没人知道能点了。给个保底宽度。 */
+      @container (max-width: 200px) {
+        .cw-pomo .acts button { padding: 4px 6px; font-size: 10.5px; }
+      }
+      @container (max-width: 170px) {
+        /* 只藏次要按钮的标签，主按钮保留文字 */
+        .cw-pomo .acts button:not(.main) .lbl { display: none; }
+        .cw-pomo .acts button { padding: 4px 7px; }
+        .cw-pomo .acts .main { min-width: 58px; }
+      }
+      /* 矮：逐级收掉次要信息，给环让出空间 */
+      @container (max-height: 200px) {
+        .cw-pomo { gap: 5px; padding: 5px; }
+        .cw-pomo .rd { display: none; }
+      }
+      @container (max-height: 165px) {
+        .cw-pomo .foot { display: none; }
+      }
+      @container (max-height: 135px) {
+        .cw-pomo .ph { display: none; }
+      }
+    `;
+    document.head.appendChild(st);
+  })();
+
+  PL.compact({
+    id: 'pomodoro-focus',
+    name: '番茄专注',
+    icon: '🍅',
+    defFormat: 'panel',
+    defSize: 'square',
+    data: () => ({ phase, running, left, round, cycles, doneToday, focusMin, goal: cfg.goal }),
+    formats: [
+      {
+        /**
+         * 主格式：可操作的番茄面板。
+         *
+         * 这是精简形态的**默认**形态 —— 它自带开始/暂停、跳过、重置，
+         * 以及进度环与今日番茄数，构成完整闭环。
+         */
+        id: 'panel',
+        name: '番茄面板',
+        icon: '🍅',
+        /**
+         * 选项里除了显示开关，还放了**完整窗口那三个时长滑块**的值。
+         *
+         * 这是本轮的统一约定：完整窗口里「调数值」的部分收进精简设置，
+         * 精简组件本身保持干净。这样用户在桌面上就能改专注时长，
+         * 不用为了调一个数字打开完整窗口。
+         */
+        options: [
+          { key: 'focus', type: 'num', label: '专注时长（分）', def: 25, min: 5, max: 60 },
+          { key: 'short', type: 'num', label: '短休息（分）', def: 5, min: 1, max: 15 },
+          { key: 'long', type: 'num', label: '长休息（分）', def: 15, min: 5, max: 30 },
+          { key: 'goal', type: 'num', label: '每日目标（个）', def: 8, min: 1, max: 16 },
+          { key: 'auto', type: 'bool', label: '阶段结束自动进入下一阶段', def: true },
+          { key: 'showRound', type: 'bool', label: '显示第几个番茄', def: true },
+          { key: 'showPips', type: 'bool', label: '显示今日进度点', def: true },
+          { key: 'showActions', type: 'bool', label: '显示操作按钮', def: true },
+        ],
+        render: (o, d) => {
+          /**
+           * 把设置里的时长同步回 cfg。
+           *
+           * 精简设置改的是插件自己的选项（存在 compact 的 state 里），
+           * 而计时逻辑读的是 cfg —— 两边必须接上，否则用户把专注时长
+           * 改成 45 分，计时器还是按 25 分跑。
+           * 每次渲染都同步一次（值没变时是空操作），保证任何入口改动
+           * 都能生效：精简设置、完整窗口的滑块，改哪边都一致。
+           */
+          syncCfgFromOpts(o);
+
+          const total = (o.focus || cfg.focus) * 60;
+          /**
+           * 环上画的是**剩余**比例，不是已过比例。
+           *
+           * ⚠ 这里原来写的是 (1 - left/total) * 100，也就是「已过百分比」——
+           * 结果红色弧随时间**越走越多**，倒计时结束瞬间正好铺满一整圈。
+           * 番茄钟的直觉是反过来的：一圈代表这一轮的总时长，
+           * 红色随着时间流逝**越来越少**，归零即结束。
+           */
+          const pct = clamp(d.left / total * 100, 0, 100);
+          const ph = LABEL[d.phase][0];
+          const pips = Array.from({ length: 8 }, (_, i) =>
+            '<i class="' + (i < d.doneToday ? 'done' : '') + '"></i>').join('');
+          const playTxt = d.running ? '⏸ 暂停' : '▶︎ 开始';
+          return {
+            cls: 'cw-pomo',
+            html:
+              '<div class="ring" style="--p:' + pct + '">' +
+                '<div class="inner">' +
+                  '<div class="ph">' + ph + '</div>' +
+                  '<div class="tm">' + timeText() + '</div>' +
+                  (o.showRound === false ? '' : '<div class="rd">第 ' + d.round + ' 个番茄</div>') +
+                '</div>' +
+              '</div>' +
+              (o.showActions === false ? '' :
+                '<div class="acts">' +
+                  '<button class="main" data-act="play" title="开始 / 暂停">' +
+                    '<span class="lbl">' + playTxt + '</span>' +
+                  '</button>' +
+                  '<button data-act="skip" title="跳过当前阶段">⏭<span class="lbl"> 跳过</span></button>' +
+                  '<button data-act="reset" title="重置当前阶段">↺<span class="lbl"> 重置</span></button>' +
+                '</div>') +
+              (o.showPips === false ? '' :
+                '<div class="foot"><span class="pips">' + pips + '</span>' +
+                '<span>' + d.doneToday + '/' + (o.goal || 8) + '</span></div>'),
+            /**
+             * 挂上按钮的事件。
+             *
+             * 点按钮必须 stopPropagation —— 精简组件的正面点击被用来
+             * 「打开完整窗口」，不拦住的话每次按开始都会弹出完整窗口。
+             */
+            onMount: (face) => {
+              face.querySelectorAll('[data-act]').forEach((btn) => {
+                btn.addEventListener('click', (e) => {
+                  e.stopPropagation();
+                  const act = btn.dataset.act;
+                  if (act === 'play') togglePlay();
+                  else if (act === 'skip') skipPhase();
+                  else if (act === 'reset') resetPhase();
+                });
+              });
+            },
+          };
+        },
+      },
+      {
+        /** 只要一个环，不要按钮（想要纯展示时用） */
+        id: 'ring',
+        name: '剩余进度',
+        icon: '⭕',
+        options: [
+          { key: 'mode', type: 'select', label: '显示方式', def: 'left',
+            options: [
+              { value: 'left', label: '剩余百分比' },
+              { value: 'elapsed', label: '已过百分比' },
+            ] },
+          { key: 'showLabel', type: 'bool', label: '显示阶段名', def: true },
+        ],
+        render: (o) => {
+          const leftPct = clamp(left / phaseTotal() * 100, 0, 100);
+          return cwf.ring({
+            pct: o.mode === 'elapsed' ? 100 - leftPct : leftPct,
+            label: o.showLabel === false ? false : LABEL[phase][1],
+          });
+        },
+      },
+      {
+        id: 'clock',
+        name: '倒计时',
+        icon: '⏱',
+        options: [
+          { key: 'showRound', type: 'bool', label: '显示第几个番茄', def: true },
+          { key: 'showName', type: 'bool', label: '显示状态文字', def: true },
+        ],
+        render: (o, d) => {
+          const s = Math.max(0, Math.floor(d.left));
+          const state = d.running ? (d.phase === 'focus' ? '专注中' : '休息中') : '已暂停';
+          return cwf.clock({
+            time: Math.floor(s / 60) + ':' + pad(s % 60),
+            sec: o.showRound === false ? false : '第 ' + d.round + ' 个番茄',
+            name: o.showName === false ? false : state,
+          });
+        },
+      },
+      {
+        id: 'stat',
+        name: '今日番茄',
+        icon: '🔢',
+        options: [
+          { key: 'which', type: 'select', label: '显示哪个', def: 'done',
+            options: [
+              { value: 'done', label: '完成番茄数' },
+              { value: 'focusMin', label: '累计专注分钟' },
+              { value: 'cycles', label: '完成循环轮数' },
+            ] },
+        ],
+        render: (o, d) => {
+          const which = o.which || 'done';
+          if (which === 'focusMin') return cwf.stat({ value: Math.round(d.focusMin), unit: '分', name: '累计专注' });
+          if (which === 'cycles') return cwf.stat({ value: d.cycles, unit: '轮', name: '完成循环' });
+          return cwf.stat({ value: d.doneToday, unit: '个', name: '今日番茄 / 目标 ' + (cfg.goal || 8) });
+        },
+      },
+    ],
+  });
+})();
+</script>
+</body>
+</html>

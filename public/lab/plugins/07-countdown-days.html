@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>倒数日 · 重要日子</title>
+<link rel="stylesheet" href="../assets/theme.css">
+<link rel="stylesheet" href="../assets/compact.css">
+<style>
+  :root { --accent: #8b5cf6; --accent-2: #a78bfa; }
+  .ev { position: relative; }
+  .ev.pin { border-color: color-mix(in srgb, var(--accent) 45%, transparent); background: color-mix(in srgb, var(--accent) 9%, var(--surface-2)); }
+  .days { font-family: var(--mono); font-size: 22px; font-weight: 700; letter-spacing: -1px; line-height: 1; }
+  .days.soon { color: var(--danger); }
+  .days.past { color: var(--muted); }
+  .pinbtn { opacity: .35; transition: .18s; }
+  .ev.pin .pinbtn { opacity: 1; }
+  .addbox { display: grid; grid-template-columns: 1fr 116px; gap: 7px; }
+  .addbox .full { grid-column: 1 / -1; }
+</style>
+</head>
+<body>
+<div class="win" style="--w:400px">
+  <header class="win-head">
+    <div class="lights"><i></i><i></i><i></i></div>
+    <div class="win-title"><span class="ico">📅</span>倒数日<span class="win-sub">重要日子</span></div>
+    <div class="spacer"></div>
+    <span class="badge" id="today">--</span>
+  </header>
+
+  <div class="win-body">
+    <div class="card col" style="gap:8px">
+      <span class="small bold">添加事件</span>
+      <div class="addbox">
+        <input type="text" id="name" placeholder="事件名称，如「项目上线」" maxlength="24">
+        <input type="date" id="date">
+        <select id="cat" class="full">
+          <option value="纪念日">🎉 纪念日</option>
+          <option value="生日">🎂 生日</option>
+          <option value="截止日">⏳ 截止日</option>
+          <option value="旅行">✈️ 旅行</option>
+        </select>
+        <button class="btn primary full" id="add">＋ 添加倒数日</button>
+      </div>
+    </div>
+
+    <div class="tabs" id="tabs">
+      <button class="active" data-s="all">全部</button>
+      <button data-s="soon">即将到来</button>
+      <button data-s="pin">已置顶</button>
+    </div>
+
+    <div class="list scroll" id="list" style="--scroll-h:260px"></div>
+  </div>
+
+  <footer class="win-foot">
+    <span class="dot live"></span><span id="foot">共 0 个事件</span>
+    <div class="spacer" style="flex:1"></div>
+    <span class="tiny" id="nearest">最近：—</span>
+  </footer>
+</div>
+
+<script src="../assets/pl.js"></script>
+<script src="../assets/compact.js"></script>
+<script>
+(function () {
+  const { $, $$, toast, beep, store, pad, today, clamp } = PL;
+
+  const DAY = 86400000;
+  function inDays(n) { const d = new Date(); d.setHours(0, 0, 0, 0); d.setDate(d.getDate() + n); return d.toISOString().slice(0, 10); }
+
+  const SEED = [
+    { id: 1, name: '项目上线日', date: inDays(12), cat: '截止日', pin: true },
+    { id: 2, name: '和喵酱相识纪念', date: inDays(45), cat: '纪念日', pin: false },
+    { id: 3, name: '妈妈生日', date: inDays(6), cat: '生日', pin: true },
+    { id: 4, name: '日本旅行出发', date: inDays(88), cat: '旅行', pin: false },
+    { id: 5, name: '入职周年', date: inDays(-320), cat: '纪念日', pin: false }
+  ];
+  const ICON = { 纪念日: '🎉', 生日: '🎂', 截止日: '⏳', 旅行: '✈️' };
+
+  let events = store.get('events', SEED);
+  let sort = 'all';
+  let seq = 500;
+
+  $('#date').value = inDays(30);
+
+  function diffDays(d) {
+    const t0 = new Date(); t0.setHours(0, 0, 0, 0);
+    const t1 = new Date(d + 'T00:00:00');
+    return Math.round((t1 - t0) / DAY);
+  }
+
+  function sorted() {
+    let list = events.slice();
+    if (sort === 'soon') list = list.filter(e => diffDays(e.date) >= 0);
+    if (sort === 'pin') list = list.filter(e => e.pin);
+    return list.sort((a, b) => (b.pin - a.pin) || (diffDays(a.date) - diffDays(b.date)));
+  }
+
+  function render() {
+    const list = sorted(), box = $('#list');
+    box.innerHTML = '';
+    if (!list.length) box.innerHTML = '<div class="empty">这里还空空的喵~ 添加一个重要的日子吧</div>';
+
+    list.forEach(e => {
+      const d = diffDays(e.date);
+      const cls = d < 0 ? 'past' : d <= 7 ? 'soon' : '';
+      /* 进度：以「今天到事件日」在 365 天里的位置表示 */
+      const pct = clamp(100 - Math.abs(d) / 365 * 100, 0, 100);
+
+      /* 大数字 + 单位合成通顺读法：「5 天后」/「321 天前」/「就是今天」 */
+      const unit = d === 0 ? '就是今天' : d > 0 ? '天后' : '天前';
+
+      const el = document.createElement('div');
+      el.className = 'item ev' + (e.pin ? ' pin' : '');
+      el.innerHTML =
+        '<div class="av">' + (ICON[e.cat] || '📌') + '</div>' +
+        '<div class="grow"><div class="t">' + esc(e.name) + '</div>' +
+        '<div class="s">' + e.date + ' · ' + e.cat + '</div>' +
+        '<div class="bar thin" style="margin-top:6px"><i style="width:' + pct + '%"></i></div></div>' +
+        '<div class="col" style="align-items:flex-end;gap:2px">' +
+          '<div class="days ' + cls + '">' + (d === 0 ? '今天' : Math.abs(d)) + '</div>' +
+          '<span class="tiny muted">' + unit + '</span>' +
+        '</div>' +
+        '<div class="col" style="gap:4px">' +
+          '<button class="btn sm pinbtn" data-pin="' + e.id + '" title="置顶">📌</button>' +
+          '<button class="btn sm danger" data-del="' + e.id + '" title="删除">✕</button>' +
+        '</div>';
+      box.appendChild(el);
+    });
+
+    $('#foot').textContent = '共 ' + events.length + ' 个事件 · 置顶 ' + events.filter(e => e.pin).length + ' 个';
+    const up = events.filter(e => diffDays(e.date) >= 0).sort((a, b) => diffDays(a.date) - diffDays(b.date))[0];
+    $('#nearest').textContent = up ? '最近：' + up.name + '（' + diffDays(up.date) + ' 天）' : '最近：—';
+    store.set('events', events);
+  }
+
+  function esc(s) { return String(s).replace(/[<>&"]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c])); }
+
+  $('#add').onclick = () => {
+    const n = $('#name').value.trim(), d = $('#date').value, c = $('#cat').value;
+    if (!n) { toast('给这个日子起个名字吧', 'warn'); return; }
+    if (!d) { toast('请选择一个日期', 'warn'); return; }
+    events.push({ id: ++seq + Date.now() % 1000, name: n, date: d, cat: c, pin: false });
+    $('#name').value = '';
+    beep(820, .09);
+    const dd = diffDays(d);
+    toast('已添加「' + n + '」' + (dd >= 0 ? '，还有 ' + dd + ' 天' : '，已过去 ' + Math.abs(dd) + ' 天'), 'ok');
+    render();
+  };
+
+  $('#list').onclick = e => {
+    const p = e.target.closest('[data-pin]');
+    if (p) {
+      const ev = events.find(x => x.id == p.dataset.pin);
+      if (ev) { ev.pin = !ev.pin; toast(ev.pin ? '已置顶：' + ev.name : '已取消置顶：' + ev.name, ev.pin ? 'ok' : 'warn'); render(); }
+      return;
+    }
+    const dl = e.target.closest('[data-del]');
+    if (dl) {
+      const i = events.findIndex(x => x.id == dl.dataset.del);
+      if (i > -1) { const [r] = events.splice(i, 1); toast('已删除：' + r.name, 'warn'); render(); }
+    }
+  };
+
+  $('#tabs').onclick = e => {
+    const b = e.target.closest('button');
+    if (!b) return;
+    sort = b.dataset.s;
+    $$('#tabs button').forEach(x => x.classList.toggle('active', x === b));
+    render();
+  };
+
+  setInterval(() => {
+    const d = new Date();
+    $('#today').textContent = d.getMonth() + 1 + '月' + d.getDate() + '日 ' + PL.fmtClock().slice(0, 5);
+    render();
+    // 数据可能随日期跨天变化，顺带刷新精简组件
+    PL.compactRefreshAll();
+  }, 1000);
+
+  render();
+
+  /* ============================================================
+     桌面精简形态：单日期 / 最近 3 条 / 置顶项
+     ============================================================ */
+  const cwf = PL.cwf;
+
+  /** 取「下一个即将到来的事件」（无未来事件时退回最近一个） */
+  function nextEvent() {
+    const up = events.filter(e => diffDays(e.date) >= 0)
+      .sort((a, b) => diffDays(a.date) - diffDays(b.date));
+    if (up.length) return up[0];
+    const past = events.slice().sort((a, b) => diffDays(b.date) - diffDays(a.date));
+    return past[0] || null;
+  }
+
+  PL.compact({
+    id: 'countdown-days',
+    name: '倒数日',
+    icon: '📅',
+    defFormat: 'date',
+    defSize: 'square',
+    data: () => ({ events, next: nextEvent() }),
+    formats: [
+      {
+        id: 'date',
+        name: '单日期',
+        icon: '📅',
+        options: [
+          { key: 'which', type: 'select', label: '显示哪个', def: 'next',
+            options: [
+              { value: 'next', label: '最近的' },
+              { value: 'pinned', label: '置顶的第一个' },
+            ] },
+          { key: 'showName', type: 'bool', label: '显示事件名', def: true },
+          { key: 'showDate', type: 'bool', label: '显示具体日期', def: false },
+        ],
+        render: (o, d) => {
+          const ev = o.which === 'pinned'
+            ? (events.find(e => e.pin) || d.next)
+            : d.next;
+          if (!ev) return { cls: 'cw-date', html: '<div class="num">—</div><div class="unit">暂无事件</div>' };
+          const dd = diffDays(ev.date);
+          const tone = dd < 0 ? 'past' : dd <= 7 ? 'soon' : '';
+          return cwf.date({
+            value: dd === 0 ? '今天' : Math.abs(dd),
+            unit: dd === 0 ? '' : (dd > 0 ? '天后' : '天前'),
+            name: o.showName === false ? false : ev.name,
+            sub: o.showDate ? ev.date : (ICON[ev.cat] || '') + ' ' + ev.cat,
+            tone,
+          });
+        },
+      },
+      {
+        id: 'list',
+        name: '最近几条',
+        icon: '📋',
+        options: [
+          { key: 'max', type: 'num', label: '显示条数', def: 3, min: 2, max: 5 },
+        ],
+        render: (o) => {
+          const rows = sorted().map(e => {
+            const dd = diffDays(e.date);
+            return {
+              icon: ICON[e.cat] || '📌',
+              text: e.name,
+              right: dd === 0 ? '今天' : (dd > 0 ? dd + '天' : '已过'),
+            };
+          });
+          return cwf.list({ rows, max: Number(o.max) || 3 });
+        },
+      },
+      {
+        id: 'stat',
+        name: '事件数',
+        icon: '🔢',
+        options: [
+          { key: 'scope', type: 'select', label: '统计范围', def: 'all',
+            options: [
+              { value: 'all', label: '全部事件' },
+              { value: 'soon', label: '即将到来' },
+              { value: 'pin', label: '已置顶' },
+            ] },
+        ],
+        render: (o) => {
+          const n = o.scope === 'soon' ? events.filter(e => diffDays(e.date) >= 0).length
+            : o.scope === 'pin' ? events.filter(e => e.pin).length
+            : events.length;
+          return cwf.stat({ value: n, unit: '个', name: '倒数事件' });
+        },
+      },
+    ],
+  });
+})();
+</script>
+</body>
+</html>

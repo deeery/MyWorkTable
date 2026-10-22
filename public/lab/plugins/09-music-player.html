@@ -1,0 +1,380 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>音乐播放器 · 迷你播放控制</title>
+<link rel="stylesheet" href="../assets/theme.css">
+<link rel="stylesheet" href="../assets/compact.css">
+<style>
+  :root { --accent: #a855f7; --accent-2: #c084fc; }
+  .cover { width: 118px; height: 118px; border-radius: 16px; display: grid; place-items: center; font-size: 46px; flex: none;
+           background: linear-gradient(135deg, var(--accent), var(--accent-2)); box-shadow: 0 14px 30px -16px var(--accent); }
+  .cover.spin { animation: spin 8s linear infinite; }
+  .ttl { font-size: 15px; font-weight: 700; }
+  .art { font-size: 12px; color: var(--muted); }
+  .prog { display: flex; align-items: center; gap: 8px; font-size: 10.5px; color: var(--muted); font-family: var(--mono); }
+  .seek { flex: 1; height: 6px; border-radius: 99px; background: color-mix(in srgb, var(--muted) 25%, transparent); position: relative; cursor: pointer; }
+  .seek > i { position: absolute; left: 0; top: 0; bottom: 0; width: 0; border-radius: 99px; background: linear-gradient(90deg, var(--accent), var(--accent-2)); }
+  .seek > b { position: absolute; top: 50%; width: 12px; height: 12px; border-radius: 50%; background: #fff; transform: translate(-50%, -50%);
+              box-shadow: 0 1px 5px rgba(0,0,0,.4); left: 0; transition: left .2s linear; }
+  .ctrl { display: flex; align-items: center; justify-content: center; gap: 14px; }
+  .ctrl .main { width: 52px; height: 52px; border-radius: 50%; font-size: 20px; }
+  .ctrl .side { width: 40px; height: 40px; border-radius: 50%; }
+  .viz { display: flex; align-items: flex-end; gap: 3px; height: 42px; }
+  .viz i { flex: 1; background: linear-gradient(180deg, var(--accent-2), var(--accent)); border-radius: 3px; height: 12%; transition: height .12s linear; }
+  .viz.paused i { height: 12% !important; }
+  .pl-item.on { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, var(--surface-2)); }
+  .lyric { text-align: center; font-size: 13px; font-weight: 650; min-height: 19px; transition: .3s; }
+  .lyric.next { font-size: 11px; color: var(--muted); font-weight: 500; }
+</style>
+</head>
+<body>
+<div class="win" style="--w:400px">
+  <header class="win-head">
+    <div class="lights"><i></i><i></i><i></i></div>
+    <div class="win-title"><span class="ico">🎵</span>音乐播放器<span class="win-sub">迷你播放控制</span></div>
+    <div class="spacer"></div>
+    <span class="badge" id="mode">顺序播放</span>
+  </header>
+
+  <div class="win-body">
+    <div class="row" style="gap:14px">
+      <div class="cover" id="cover">🎵</div>
+      <div class="col grow" style="gap:4px">
+        <div class="ttl" id="ttl">未播放</div>
+        <div class="art" id="art">—</div>
+        <div class="viz paused" id="viz"></div>
+        <div class="prog">
+          <span id="cur">0:00</span>
+          <div class="seek" id="seek"><i id="seekBar"></i><b id="seekDot"></b></div>
+          <span id="dur">0:00</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="card col" style="gap:6px;text-align:center">
+      <div class="lyric" id="lyric">— 点击播放开始收听 —</div>
+      <div class="lyric next" id="lyricNext"></div>
+    </div>
+
+    <div class="ctrl">
+      <button class="btn side" id="prev" title="上一首">⏮</button>
+      <button class="btn primary main" id="play" title="播放/暂停">▶</button>
+      <button class="btn side" id="next" title="下一首">⏭</button>
+    </div>
+
+    <div class="row" style="gap:9px">
+      <button class="btn icon" id="mute" title="静音">🔊</button>
+      <input type="range" id="vol" min="0" max="100" value="72" style="flex:1">
+      <span class="badge" id="volTxt">72%</span>
+      <button class="btn icon" id="modeBtn" title="播放模式">🔁</button>
+    </div>
+
+    <div class="tabs" id="tabs">
+      <button class="active" data-t="list">播放列表</button>
+      <button data-t="eq">音效</button>
+    </div>
+
+    <div id="paneList" class="list scroll" style="--scroll-h:150px"></div>
+
+    <div id="paneEq" class="card col hidden" style="gap:10px">
+      <div class="row">
+        <span class="small muted" style="width:44px">低音</span>
+        <input type="range" id="bass" min="-10" max="10" value="2" style="flex:1"><span class="badge" id="bassV">+2</span>
+      </div>
+      <div class="row">
+        <span class="small muted" style="width:44px">高音</span>
+        <input type="range" id="treble" min="-10" max="10" value="1" style="flex:1"><span class="badge" id="trebleV">+1</span>
+      </div>
+      <label class="inline"><input type="checkbox" id="loopOne"> 单曲循环</label>
+      <label class="inline"><input type="checkbox" id="shuffle"> 随机播放</label>
+      <div class="chips" id="eqPresets">
+        <span class="chip on" data-eq="flat">标准</span>
+        <span class="chip" data-eq="pop">流行</span>
+        <span class="chip" data-eq="rock">摇滚</span>
+        <span class="chip" data-eq="vocal">人声</span>
+      </div>
+    </div>
+  </div>
+
+  <footer class="win-foot">
+    <span class="dot" id="dot"></span><span id="foot">已暂停</span>
+    <div class="spacer" style="flex:1"></div>
+    <span class="tiny" id="total">共 0 首 · 0:00</span>
+  </footer>
+</div>
+
+<script src="../assets/pl.js"></script>
+<script src="../assets/compact.js"></script>
+<script>
+(function () {
+  const { $, $$, toast, beep, store, pad } = PL;
+
+  const TRACKS = [
+    { t: '夜航星', a: '喵酱乐队', ic: '🌌', d: 214, col: ['#6366f1', '#818cf8'],
+      lrc: [[0, '夜色把城市轻轻盖住'], [14, '我沿着星轨慢慢散步'], [30, '风把心事吹得很远'], [46, '只剩耳机里的鼓点'], [64, '如果累了就闭上眼'], [82, '让月光替我值班'], [104, '夜航星 请照亮回家的路'], [130, '我会带着勇气降落']] },
+    { t: '午后拿铁', a: 'Cafe Cats', ic: '☕', d: 186, col: ['#f97316', '#fb923c'],
+      lrc: [[0, '阳光斜斜落在桌角'], [18, '奶泡在杯里打了个转'], [40, '今天的待办慢慢来'], [66, '先把这杯咖啡喝完'], [92, '呼噜呼噜 是猫在打鼾'], [120, '午后三点 世界很慢']] },
+    { t: '代码与海', a: 'Dev Ocean', ic: '🌊', d: 246, col: ['#0ea5e9', '#38bdf8'],
+      lrc: [[0, '光标在黑色里闪动'], [20, '逻辑像潮水一样涌'], [44, '编译通过的那一秒'], [70, '像看见海平线放晴'], [100, '写下去 别怕报错'], [132, '每一次调试都是靠近'], [170, '代码与海 都值得热爱']] },
+    { t: '小鱼干进行曲', a: '喵酱乐队', ic: '🐟', d: 152, col: ['#f43f5e', '#fb7185'],
+      lrc: [[0, '叮叮当当 小鱼干登场'], [16, '尾巴摇成一片波浪'], [34, '今天的快乐很简单'], [56, '一根小鱼干就够了'], [80, '喵呜喵呜 一起唱'], [108, '快乐不用理由']] },
+    { t: '深潜', a: 'Blue Noise', ic: '🐋', d: 268, col: ['#0f766e', '#2dd4bf'],
+      lrc: [[0, '下潜到三十米'], [24, '声音变得很轻'], [52, '光线是一条一条的'], [84, '像时间被拉长'], [120, '别急着浮上去'], [160, '这里的安静很贵'], [210, '深潜 直到心静下来']] }
+  ];
+
+  let i = 0, playing = false, pos = 0, vol = store.get('vol', 72), muted = false, mode = 'order';
+  let vizBars = 26;
+
+  /* 播放列表 */
+  const lb = $('#paneList');
+  TRACKS.forEach((tr, k) => {
+    const el = document.createElement('div');
+    el.className = 'item';
+    el.dataset.k = k;
+    el.innerHTML = '<div class="av">' + tr.ic + '</div><div class="grow"><div class="t">' + tr.t + '</div>' +
+      '<div class="s">' + tr.a + ' · ' + fmt(tr.d) + '</div></div><span class="tiny muted">' + (k + 1) + '</span>';
+    lb.appendChild(el);
+  });
+  function fmt(s) { s = Math.round(s); return Math.floor(s / 60) + ':' + pad(s % 60); }
+
+  /* 频谱柱 */
+  const vz = $('#viz');
+  for (let k = 0; k < vizBars; k++) vz.appendChild(document.createElement('i'));
+
+  function paintList() {
+    $$('#paneList .item').forEach(el => el.classList.toggle('on', +el.dataset.k === i));
+  }
+
+  function load(k, autoplay) {
+    i = (k + TRACKS.length) % TRACKS.length;
+    pos = 0;
+    const tr = TRACKS[i];
+    $('#ttl').textContent = tr.t;
+    $('#art').textContent = tr.a;
+    $('#dur').textContent = fmt(tr.d);
+    $('#cover').textContent = tr.ic;
+    $('#cover').style.background = 'linear-gradient(135deg,' + tr.col[0] + ',' + tr.col[1] + ')';
+    document.documentElement.style.setProperty('--accent', tr.col[0]);
+    document.documentElement.style.setProperty('--accent-2', tr.col[1]);
+    if (autoplay) play(true);
+    paintList(); paintLyric(); paint();
+  }
+
+  function paintLyric() {
+    const tr = TRACKS[i];
+    let cur = null, nxt = null;
+    for (let k = 0; k < tr.lrc.length; k++) {
+      if (tr.lrc[k][0] <= pos) { cur = tr.lrc[k]; nxt = tr.lrc[k + 1] || null; }
+    }
+    $('#lyric').textContent = cur ? cur[1] : '♪ 前奏 ♪';
+    $('#lyricNext').textContent = nxt ? nxt[1] : '';
+  }
+
+  function paint() {
+    const tr = TRACKS[i];
+    const pct = Math.min(100, pos / tr.d * 100);
+    $('#cur').textContent = fmt(pos);
+    $('#seekBar').style.width = pct + '%';
+    $('#seekDot').style.left = pct + '%';
+    $('#play').textContent = playing ? '⏸' : '▶';
+    $('#dot').className = 'dot' + (playing ? ' live' : '');
+    $('#foot').textContent = playing ? '正在播放 · ' + tr.t : '已暂停 · ' + tr.t;
+    $('#cover').classList.toggle('spin', playing);
+    $('#mode').textContent = mode === 'order' ? '顺序播放' : mode === 'one' ? '单曲循环' : '随机播放';
+    $('#volTxt').textContent = (muted ? 0 : vol) + '%';
+    $('#mute').textContent = muted || vol === 0 ? '🔇' : vol < 45 ? '🔉' : '🔊';
+    $('#total').textContent = '共 ' + TRACKS.length + ' 首 · ' + fmt(TRACKS.reduce((a, b) => a + b.d, 0));
+  }
+
+  function play(on) {
+    playing = on;
+    if (on) { beep(880, .06, 'triangle'); $('#foot').textContent = '正在播放 · ' + TRACKS[i].t; }
+    paint();
+  }
+
+  $('#play').onclick = () => play(!playing);
+  $('#next').onclick = () => { load(mode === 'shuffle' ? Math.floor(Math.random() * TRACKS.length) : i + 1, playing); toast('下一首：' + TRACKS[i].t); };
+  $('#prev').onclick = () => {
+    if (pos > 5) { pos = 0; paintLyric(); paint(); toast('已回到开头'); return; }
+    load(i - 1, playing); toast('上一首：' + TRACKS[i].t);
+  };
+  $('#paneList').onclick = e => {
+    const it = e.target.closest('.item');
+    if (!it) return;
+    load(+it.dataset.k, true);
+    toast('▶ 正在播放：' + TRACKS[i].t, 'ok');
+  };
+
+  $('#seek').onclick = e => {
+    const r = $('#seek').getBoundingClientRect();
+    pos = Math.max(0, Math.min(TRACKS[i].d, (e.clientX - r.left) / r.width * TRACKS[i].d));
+    paintLyric(); paint();
+  };
+  $('#vol').oninput = e => { vol = +e.target.value; muted = false; store.set('vol', vol); paint(); };
+  $('#mute').onclick = () => { muted = !muted; toast(muted ? '已静音 🔇' : '已取消静音 🔊', muted ? 'warn' : 'ok'); paint(); };
+  $('#modeBtn').onclick = () => {
+    mode = mode === 'order' ? 'one' : mode === 'one' ? 'shuffle' : 'order';
+    $('#loopOne').checked = mode === 'one'; $('#shuffle').checked = mode === 'shuffle';
+    toast('播放模式：' + $('#mode').textContent);
+    paint();
+  };
+  $('#loopOne').onchange = e => { mode = e.target.checked ? 'one' : 'order'; $('#shuffle').checked = false; paint(); };
+  $('#shuffle').onchange = e => { mode = e.target.checked ? 'shuffle' : 'order'; $('#loopOne').checked = false; paint(); };
+
+  $('#tabs').onclick = e => {
+    const b = e.target.closest('button');
+    if (!b) return;
+    $$('#tabs button').forEach(x => x.classList.toggle('active', x === b));
+    $('#paneList').classList.toggle('hidden', b.dataset.t !== 'list');
+    $('#paneEq').classList.toggle('hidden', b.dataset.t !== 'eq');
+  };
+
+  const EQ = { flat: [0, 0], pop: [3, 2], rock: [5, 3], vocal: [-2, 4] };
+  $('#eqPresets').onclick = e => {
+    const c = e.target.closest('.chip');
+    if (!c) return;
+    const [b, t] = EQ[c.dataset.eq];
+    $('#bass').value = b; $('#treble').value = t;
+    $('#bassV').textContent = (b > 0 ? '+' : '') + b;
+    $('#trebleV').textContent = (t > 0 ? '+' : '') + t;
+    $$('#eqPresets .chip').forEach(x => x.classList.toggle('on', x === c));
+    toast('已切换音效预设：' + c.textContent, 'ok');
+  };
+  $('#bass').oninput = e => { $('#bassV').textContent = (+e.target.value > 0 ? '+' : '') + e.target.value; };
+  $('#treble').oninput = e => { $('#trebleV').textContent = (+e.target.value > 0 ? '+' : '') + e.target.value; };
+
+  /* 每秒推进播放进度 + 频谱跳动 */
+  setInterval(() => {
+    if (playing) {
+      pos += 1;
+      if (pos >= TRACKS[i].d) {
+        if (mode === 'one') { pos = 0; }
+        else { load(mode === 'shuffle' ? Math.floor(Math.random() * TRACKS.length) : i + 1, true); toast('自动播放下一首：' + TRACKS[i].t); }
+      }
+      paintLyric(); paint();
+    }
+    /* 频谱 */
+    const amp = playing ? (muted || vol === 0 ? 0.15 : vol / 100) : 0.08;
+    Array.from(vz.children).forEach((bar, k) => {
+      const base = playing ? (0.25 + Math.abs(Math.sin((Date.now() / 260) + k * 0.7)) * 0.75) : 0.12;
+      const env = 1 - Math.abs(k - vizBars / 2) / (vizBars * 0.9);
+      bar.style.height = Math.round(Math.max(6, base * env * amp * 130)) + '%';
+    });
+    // 播放进度每秒推进，顺带刷新精简组件
+    PL.compactRefreshAll();
+  }, 1000);
+
+  /* 频谱更细腻地跳动（独立高频定时器，仅改样式） */
+  setInterval(() => {
+    if (!playing) return;
+    Array.from(vz.children).forEach((bar, k) => {
+      const base = 0.2 + Math.abs(Math.sin((Date.now() / 190) + k * 0.9)) * 0.8;
+      const env = 1 - Math.abs(k - vizBars / 2) / (vizBars * 0.95);
+      const amp = (muted || vol === 0) ? 0.15 : vol / 100;
+      bar.style.height = Math.round(Math.max(6, base * env * amp * 130)) + '%';
+    });
+  }, 110);
+
+  load(0, false);
+  toast('点播放开始，喵酱为你点歌 🎵');
+
+  /* ============================================================
+     桌面精简形态：当前封面 / 歌词一行 / 播放进度
+     ============================================================ */
+  const cwf = PL.cwf;
+
+  /** 取某首歌在指定进度处的歌词行（无则返回 null） */
+  function lyricAt(tr, p) {
+    let cur = null;
+    for (let k = 0; k < tr.lrc.length; k++) if (tr.lrc[k][0] <= p) cur = tr.lrc[k];
+    return cur;
+  }
+
+  PL.compact({
+    id: 'music-player',
+    name: '音乐播放器',
+    icon: '🎵',
+    defFormat: 'icon',
+    defSize: 'square',
+    data: () => ({ tracks: TRACKS, i, playing, pos, vol, muted, mode }),
+    formats: [
+      {
+        id: 'icon',
+        name: '当前封面',
+        icon: '🎵',
+        options: [
+          { key: 'which', type: 'select', label: '显示哪个', def: 'current',
+            options: [
+              { value: 'current', label: '当前歌曲' },
+              { value: 'next', label: '下一首' },
+              { value: 'first', label: '第一首' },
+            ] },
+          { key: 'showName', type: 'bool', label: '显示歌名', def: true },
+        ],
+        render: (o, d) => {
+          const k = o.which === 'next' ? (d.i + 1) % d.tracks.length : o.which === 'first' ? 0 : d.i;
+          const tr = d.tracks[k] || d.tracks[0];
+          return cwf.icon({
+            emoji: tr.ic, color: tr.col[0], name: tr.t,
+            label: o.showName === false ? false : true,
+          });
+        },
+      },
+      {
+        id: 'text',
+        name: '歌词一行',
+        icon: '📝',
+        options: [
+          { key: 'by', type: 'select', label: '出处显示', def: 'song',
+            options: [
+              { value: 'song', label: '歌名 · 歌手' },
+              { value: 'state', label: '播放状态' },
+              { value: 'none', label: '不显示' },
+            ] },
+          { key: 'fallback', type: 'bool', label: '无歌词时显示歌名', def: true },
+        ],
+        render: (o, d) => {
+          const tr = d.tracks[d.i] || d.tracks[0];
+          const cur = lyricAt(tr, d.pos);
+          const text = cur ? cur[1] : (o.fallback === false ? '♪ 前奏 ♪' : tr.t + ' — ' + tr.a);
+          const by = o.by === 'none' ? ''
+            : o.by === 'state' ? (d.playing ? '正在播放' : '已暂停') + ' · ' + fmt(d.pos)
+            : tr.t + ' · ' + tr.a;
+          return cwf.text({ text, by });
+        },
+      },
+      {
+        id: 'bar',
+        name: '播放进度',
+        icon: '📊',
+        options: [
+          { key: 'showName', type: 'bool', label: '显示歌名', def: true },
+          { key: 'sub', type: 'select', label: '副标题', def: 'artist',
+            options: [
+              { value: 'artist', label: '歌手' },
+              { value: 'state', label: '播放状态' },
+              { value: 'none', label: '不显示' },
+            ] },
+        ],
+        render: (o, d) => {
+          const tr = d.tracks[d.i] || d.tracks[0];
+          const sub = o.sub === 'none' ? ''
+            : o.sub === 'state' ? (d.playing ? '正在播放' : '已暂停')
+            : tr.a;
+          return cwf.bar({
+            name: o.showName === false ? '' : tr.t,
+            value: fmt(d.pos),
+            unit: '/ ' + fmt(tr.d),
+            pct: Math.min(100, d.pos / tr.d * 100),
+            sub,
+          });
+        },
+      },
+    ],
+  });
+})();
+</script>
+</body>
+</html>

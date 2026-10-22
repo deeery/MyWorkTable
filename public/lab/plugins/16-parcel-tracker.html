@@ -1,0 +1,422 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>快递追踪 · 物流进度</title>
+<link rel="stylesheet" href="../assets/theme.css">
+<link rel="stylesheet" href="../assets/compact.css">
+<style>
+  :root { --accent: #f472b6; --accent-2: #f9a8d4; }
+  .p-item { cursor: pointer; }
+  .p-item .no { font-family: var(--mono); font-size: 10.5px; }
+  .p-item .s { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* 物流时间轴 */
+  .tl { margin: 8px 0 4px 8px; padding-left: 14px; border-left: 2px dashed color-mix(in srgb, var(--accent) 45%, transparent); display: flex; flex-direction: column; gap: 9px; }
+  .tl .st { position: relative; font-size: 11.5px; line-height: 1.45; }
+  .tl .st::before { content: ""; position: absolute; left: -20px; top: 4px; width: 9px; height: 9px; border-radius: 50%;
+                    background: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 20%, transparent); }
+  .tl .st.old::before { background: color-mix(in srgb, var(--muted) 50%, transparent); box-shadow: none; }
+  .tl .st .tt { display: block; font-family: var(--mono); font-size: 10px; color: var(--muted); }
+  .tl .st.bad::before { background: var(--danger); }
+  .add-row { display: grid; grid-template-columns: 92px 1fr auto auto; gap: 6px; }
+  .alert-line { display: flex; align-items: center; gap: 8px; font-size: 11.5px; font-weight: 600; color: var(--danger);
+                background: color-mix(in srgb, var(--danger) 12%, transparent); border: 1px solid color-mix(in srgb, var(--danger) 30%, transparent);
+                border-radius: 10px; padding: 7px 10px; }
+</style>
+</head>
+<body>
+<div class="win" style="--w:420px">
+  <header class="win-head">
+    <div class="lights"><i></i><i></i><i></i></div>
+    <div class="win-title"><span class="ico">📦</span>快递追踪<span class="win-sub">物流进度</span></div>
+    <div class="spacer"></div>
+    <span class="badge mono" id="clock">--:--:--</span>
+  </header>
+
+  <div class="win-body">
+    <div class="stats">
+      <div class="card stat"><b id="s1">0</b><span>运输中</span></div>
+      <div class="card stat"><b id="s2">0</b><span>派送中</span></div>
+      <div class="card stat"><b id="s3">0</b><span>已签收</span></div>
+    </div>
+
+    <div class="alert-line hidden" id="alertBox">
+      <span>⚠️</span><span id="alertText">有运单出现异常</span>
+    </div>
+
+    <div class="row">
+      <input type="search" id="q" placeholder="搜索单号 / 快递公司 / 状态…">
+      <button class="btn icon" id="refresh" title="刷新物流状态">🔄</button>
+    </div>
+
+    <div class="add-row">
+      <select id="co" title="快递公司">
+        <option value="sf">顺丰速运</option>
+        <option value="zto">中通快递</option>
+        <option value="yto">圆通速递</option>
+        <option value="yd">韵达快递</option>
+        <option value="jd">京东物流</option>
+        <option value="ems">邮政 EMS</option>
+      </select>
+      <input type="text" id="no" placeholder="输入运单号，例如 SF1234567890">
+      <button class="btn primary" id="add">＋ 添加</button>
+      <button class="btn icon" id="rand" title="随机生成一条运单">🎲</button>
+    </div>
+
+    <div class="row between">
+      <span class="small bold">我的运单 <span class="muted tiny" id="total"></span></span>
+      <button class="btn sm danger" id="clear">清空全部</button>
+    </div>
+
+    <div class="list scroll" id="list" style="--scroll-h:230px"></div>
+  </div>
+
+  <footer class="win-foot">
+    <span class="dot live"></span><span id="foot">物流推送已连接</span>
+    <div class="spacer" style="flex:1"></div>
+    <span class="tiny">预览版 · 数据存本地</span>
+  </footer>
+</div>
+
+<script src="../assets/pl.js"></script>
+<script src="../assets/compact.js"></script>
+<script>
+(function () {
+  const { $, $$, toast, beep, store, pad, pick } = PL;
+
+  /* ---------- 静态数据 ---------- */
+  const CO = {
+    sf:  { name: '顺丰速运', icon: '⚡' },
+    zto: { name: '中通快递', icon: '🔵' },
+    yto: { name: '圆通速递', icon: '🟡' },
+    yd:  { name: '韵达快递', icon: '🟢' },
+    jd:  { name: '京东物流', icon: '🐶' },
+    ems: { name: '邮政 EMS', icon: '🏤' }
+  };
+  const STAGES = ['已揽收', '运输中', '派送中', '已签收'];
+  const CITIES = ['杭州', '上海', '北京', '广州', '成都', '武汉', '深圳', '西安'];
+  const BADGE = [
+    { text: '在途', cls: '' },
+    { text: '在途', cls: '' },
+    { text: '派送中', cls: 'warn' },
+    { text: '已签收', cls: 'ok' }
+  ];
+
+  const stamp = mins => {
+    const d = new Date(Date.now() - (mins || 0) * 60000);
+    return pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+  };
+  const stageText = (p, i) => [
+    '【' + p.from + '】快件已被揽收，揽收员已取件',
+    '【' + p.from + '转运中心】快件已发出，下一站【' + p.to + '】',
+    '【' + p.to + '】快件正在派送中，快递员 138****6688',
+    '【' + p.to + '】快件已签收，感谢使用' + CO[p.co].name
+  ][i] || '';
+
+  /* ---------- 状态 ---------- */
+  let parcels = store.get('parcels', null);
+  let openId = null;      // 展开时间轴的运单
+  let armed = false;      // 「清空全部」二次确认
+  let autoLeft = 30;      // 自动刷新倒计时
+
+  function makeParcel(co, no, status, from, to) {
+    const p = { id: 'p' + Math.random().toString(36).slice(2, 8), co, no, status, from, to, steps: [] };
+    const upto = status < 0 ? 2 : status;
+    for (let i = 0; i <= upto; i++) p.steps.push({ t: stamp((upto - i) * 300 + 60), s: stageText(p, i) });
+    if (status < 0) p.steps.push({ t: stamp(20), s: '【' + to + '】快件因天气原因滞留，派送延迟，请耐心等待' });
+    return p;
+  }
+
+  function seed() {
+    const n = Date.now();
+    return [
+      makeParcel('sf',  'SF' + (n % 1000000000), 2, '杭州', '上海'),
+      makeParcel('zto', 'ZT' + ((n * 3) % 1000000000), 1, '广州', '成都'),
+      makeParcel('jd',  'JD' + ((n * 7) % 1000000000), 3, '北京', '深圳'),
+      makeParcel('yd',  'YD' + ((n * 11) % 1000000000), -1, '武汉', '西安')
+    ];
+  }
+  if (!Array.isArray(parcels) || !parcels.length) parcels = seed();
+
+  const save = () => store.set('parcels', parcels);
+  const badgeOf = p => (p.status < 0 ? { text: '异常', cls: 'danger' } : BADGE[p.status]);
+
+  /** 推进一个运单的物流状态，返回是否发生变化 */
+  function advance(p) {
+    if (p.status < 0 || p.status >= 3) return false;
+    p.status++;
+    p.steps.push({ t: stamp(0), s: stageText(p, p.status) });
+    return true;
+  }
+
+  /* ---------- 渲染 ---------- */
+  function render() {
+    const q = String($('#q').value || '').trim().toLowerCase();
+    const hit = parcels.filter(p =>
+      !q || p.no.toLowerCase().includes(q) ||
+      CO[p.co].name.toLowerCase().includes(q) ||
+      badgeOf(p).text.includes(q));
+
+    // 统计
+    $('#s1').textContent = parcels.filter(p => p.status === 0 || p.status === 1).length;
+    $('#s2').textContent = parcels.filter(p => p.status === 2).length;
+    $('#s3').textContent = parcels.filter(p => p.status === 3).length;
+    $('#total').textContent = '共 ' + parcels.length + ' 条';
+
+    const bad = parcels.filter(p => p.status < 0);
+    const box = $('#alertBox');
+    box.classList.toggle('hidden', !bad.length);
+    if (bad.length) $('#alertText').textContent = bad.length + ' 条运单异常：' + bad.map(p => p.no).join('、');
+
+    // 列表
+    const list = $('#list');
+    list.innerHTML = '';
+    if (!parcels.length) {
+      list.innerHTML = '<div class="empty">还没有运单喵~<br>在上面输入单号，或点 🎲 随机来一条</div>';
+    } else if (!hit.length) {
+      list.innerHTML = '<div class="empty">没有匹配「' + q + '」的运单喵 (｡•́︿•̀｡)</div>';
+    }
+
+    hit.forEach(p => {
+      const st = badgeOf(p);
+      const last = p.steps[p.steps.length - 1] || { t: '--', s: '暂无物流信息' };
+      const el = document.createElement('div');
+      el.className = 'item p-item';
+      el.innerHTML =
+        '<div class="av">' + CO[p.co].icon + '</div>' +
+        '<div class="grow">' +
+          '<div class="t">' + CO[p.co].name + ' <span class="no muted">' + p.no + '</span></div>' +
+          '<div class="s">' + last.t + ' · ' + last.s.replace(/【[^】]*】/g, '') + '</div>' +
+        '</div>' +
+        '<span class="badge ' + st.cls + '">' + st.text + '</span>' +
+        '<span class="tiny muted">' + (openId === p.id ? '▾' : '▸') + '</span>';
+      el.onclick = () => { openId = openId === p.id ? null : p.id; render(); };
+      list.appendChild(el);
+
+      if (openId === p.id) {
+        const tl = document.createElement('div');
+        tl.className = 'tl';
+        tl.innerHTML = p.steps.slice().reverse().map((s, i) =>
+          '<div class="st' + (i ? ' old' : '') + (p.status < 0 && !i ? ' bad' : '') + '">' +
+            '<span class="tt">' + s.t + '</span>' + s.s +
+          '</div>').join('');
+        list.appendChild(tl);
+
+        const ops = document.createElement('div');
+        ops.className = 'row';
+        ops.style.margin = '2px 0 6px';
+        ops.innerHTML = '<button class="btn sm" data-step="' + p.id + '">🚚 手动推进状态</button>' +
+                        '<button class="btn sm danger" data-del="' + p.id + '">🗑 删除运单</button>';
+        list.appendChild(ops);
+      }
+    });
+
+    $$('#list [data-step]').forEach(b => b.onclick = e => {
+      e.stopPropagation();
+      const p = parcels.find(x => x.id === b.dataset.step);
+      if (!p) return;
+      if (advance(p)) { beep(720, .12); toast('物流已更新：' + STAGES[p.status], 'ok'); }
+      else toast('这条运单已经到终态啦', 'warn');
+      save(); render();
+    });
+    $$('#list [data-del]').forEach(b => b.onclick = e => {
+      e.stopPropagation();
+      const i = parcels.findIndex(x => x.id === b.dataset.del);
+      if (i < 0) return;
+      const no = parcels[i].no;
+      parcels.splice(i, 1);
+      if (openId === b.dataset.del) openId = null;
+      save(); render(); toast('已删除运单 ' + no, 'warn');
+    });
+  }
+
+  /* ---------- 交互 ---------- */
+  $('#q').oninput = render;
+
+  $('#add').onclick = () => {
+    const no = String($('#no').value || '').trim().toUpperCase();
+    if (!no) { toast('先填一个运单号喵~', 'warn'); $('#no').focus(); return; }
+    if (parcels.some(p => p.no === no)) { toast('这条运单已经在列表里了', 'warn'); return; }
+    const co = $('#co').value || 'sf';
+    parcels.unshift(makeParcel(co, no, 0, pick(CITIES), pick(CITIES)));
+    $('#no').value = '';
+    openId = parcels[0].id;
+    save(); render(); beep(880, .1); toast('已添加 ' + CO[co].name + ' 运单', 'ok');
+  };
+
+  $('#rand').onclick = () => {
+    const co = pick(Object.keys(CO));
+    const no = co.toUpperCase() + Math.floor(100000000 + Math.random() * 899999999);
+    parcels.unshift(makeParcel(co, no, 0, pick(CITIES), pick(CITIES)));
+    openId = parcels[0].id;
+    save(); render(); toast('随机生成了一条 ' + CO[co].name + ' 运单', 'ok');
+  };
+
+  $('#refresh').onclick = () => {
+    const live = parcels.filter(p => p.status >= 0 && p.status < 3);
+    const bad = parcels.filter(p => p.status < 0);
+    if (!live.length && !bad.length) { toast('所有运单都已签收喵~', 'warn'); return; }
+    let n = 0, fixed = 0;
+    // 异常件有几率恢复正常运输
+    bad.forEach(p => {
+      if (Math.random() < 0.6) {
+        p.status = 2;
+        p.steps.push({ t: stamp(0), s: '【' + p.to + '】异常已解除，快件重新派送中' });
+        fixed++;
+      }
+    });
+    live.forEach(p => {
+      // 小概率模拟异常，其余正常推进
+      if (Math.random() < 0.12) {
+        p.status = -1;
+        p.steps.push({ t: stamp(0), s: '【' + p.to + '】快件滞留，派送异常，请联系客服' });
+      } else if (advance(p)) n++;
+    });
+    save(); render(); beep(660, .1);
+    const parts = [];
+    if (n) parts.push(n + ' 条推进');
+    if (fixed) parts.push(fixed + ' 条异常恢复');
+    if (bad.length - fixed) parts.push((bad.length - fixed) + ' 条仍异常');
+    toast('刷新完成：' + (parts.join('，') || '暂无变化'), n || fixed ? 'ok' : 'warn');
+  };
+
+  $('#clear').onclick = () => {
+    if (!armed) {
+      armed = true;
+      $('#clear').textContent = '确认清空？';
+      toast('再点一次就会清空全部运单喵！', 'warn');
+      setTimeout(() => { armed = false; $('#clear').textContent = '清空全部'; }, 3000);
+      return;
+    }
+    armed = false;
+    $('#clear').textContent = '清空全部';
+    parcels = []; openId = null;
+    save(); render(); beep(320, .2, 'triangle'); toast('运单已全部清空', 'danger');
+  };
+
+  /* ---------- 每秒：时钟 + 自动刷新倒计时 ---------- */
+  setInterval(() => {
+    $('#clock').textContent = PL.fmtClock();
+    autoLeft--;
+    if (autoLeft <= 0) {
+      autoLeft = 30;
+      const live = parcels.filter(p => p.status >= 0 && p.status < 3);
+      if (live.length) {
+        const p = pick(live);
+        if (advance(p)) { save(); render(); toast('📦 ' + p.no + ' 有新动态：' + STAGES[p.status], 'info', 2200); }
+      }
+    }
+    $('#foot').textContent = '物流推送已连接 · ' + autoLeft + 's 后自动刷新';
+    // 运单状态可能刚被自动推进，顺带刷新精简组件
+    PL.compactRefreshAll();
+  }, 1000);
+
+  render();
+
+  /* ============================================================
+     桌面精简形态：在途运单数 / 最近运单 / 签收进度
+     ============================================================ */
+  const cwf = PL.cwf;
+
+  /** 按范围统计运单数 */
+  function countBy(scope) {
+    if (scope === 'transit') return parcels.filter(p => p.status === 0 || p.status === 1).length;
+    if (scope === 'sending') return parcels.filter(p => p.status === 2).length;
+    if (scope === 'done') return parcels.filter(p => p.status === 3).length;
+    if (scope === 'bad') return parcels.filter(p => p.status < 0).length;
+    return parcels.length;
+  }
+
+  /** 按筛选条件取出运单：异常件最前，其余按阶段先后（越早越前） */
+  function pickParcels(scope) {
+    let arr = parcels.slice();
+    if (scope === 'live') arr = arr.filter(p => p.status >= 0 && p.status < 3);
+    else if (scope === 'bad') arr = arr.filter(p => p.status < 0);
+    else if (scope === 'done') arr = arr.filter(p => p.status === 3);
+    const rank = p => (p.status < 0 ? 0 : 1);
+    return arr.sort((a, b) => (rank(a) - rank(b)) || (a.status - b.status));
+  }
+
+  PL.compact({
+    id: 'parcel-tracker',
+    name: '快递追踪',
+    icon: '📦',
+    defFormat: 'stat',
+    defSize: 'square',
+    data: () => ({ parcels }),
+    formats: [
+      {
+        id: 'stat',
+        name: '在途运单数',
+        icon: '🚚',
+        options: [
+          { key: 'scope', type: 'select', label: '统计范围', def: 'transit',
+            options: [
+              { value: 'transit', label: '运输中' },
+              { value: 'sending', label: '派送中' },
+              { value: 'done', label: '已签收' },
+              { value: 'bad', label: '异常件' },
+              { value: 'all', label: '全部运单' },
+            ] },
+          { key: 'label', type: 'text', label: '标签文字', def: '在途运单' },
+        ],
+        render: (o) => cwf.stat({
+          value: countBy(o.scope),
+          unit: '单',
+          name: o.label || '运单',
+        }),
+      },
+      {
+        id: 'list',
+        name: '最近运单',
+        icon: '📋',
+        options: [
+          { key: 'max', type: 'num', label: '显示条数', def: 3, min: 2, max: 5 },
+          { key: 'scope', type: 'select', label: '筛选', def: 'live',
+            options: [
+              { value: 'live', label: '未签收' },
+              { value: 'all', label: '全部运单' },
+              { value: 'bad', label: '仅异常件' },
+            ] },
+        ],
+        render: (o, d) => {
+          const rows = pickParcels(o.scope).map(p => ({
+            icon: CO[p.co].icon,
+            text: CO[p.co].name + ' ' + p.no,
+            right: badgeOf(p).text,
+          }));
+          if (!rows.length) return cwf.list({ rows: [{ icon: '📦', text: '暂无运单喵~', right: '' }], max: 1 });
+          return cwf.list({ rows, max: Number(o.max) || 3 });
+        },
+      },
+      {
+        id: 'ring',
+        name: '签收进度',
+        icon: '🎯',
+        options: [
+          { key: 'base', type: 'select', label: '统计口径', def: 'done',
+            options: [
+              { value: 'done', label: '已签收占比' },
+              { value: 'live', label: '未签收占比' },
+            ] },
+          { key: 'showLabel', type: 'bool', label: '显示「几/几」', def: true },
+        ],
+        render: (o, d) => {
+          const total = d.parcels.length;
+          const done = d.parcels.filter(p => p.status === 3).length;
+          const n = o.base === 'live' ? total - done : done;
+          const pct = total ? Math.round(n / total * 100) : 0;
+          return cwf.ring({
+            pct: pct,
+            label: o.showLabel === false ? false
+              : (o.base === 'live' ? '未签收 ' : '已签收 ') + n + ' / ' + total,
+          });
+        },
+      },
+    ],
+  });
+})();
+</script>
+</body>
+</html>

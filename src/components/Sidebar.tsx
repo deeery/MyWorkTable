@@ -1,5 +1,6 @@
 import type { PageKey } from '../App'
 import { useApp } from '../state/AppContext'
+import type { SidebarMode } from '../core/storage'
 
 const ICONS: Record<PageKey, JSX.Element> = {
   desktop: (
@@ -23,16 +24,95 @@ const NAV: Array<{ key: PageKey; label: string }> = [
   { key: 'profile', label: '我的' },
 ]
 
+/** 侧边栏形态循环顺序 */
+const MODE_CYCLE: SidebarMode[] = ['detailed', 'mini', 'hidden']
+
+const MODE_LABEL: Record<SidebarMode, string> = {
+  detailed: '详细',
+  mini: '迷你',
+  hidden: '隐藏',
+}
+
+/** 按「详细 → 迷你 → 隐藏 → 详细」循环切换侧边栏形态 */
+function useSidebarCycle() {
+  const { settings, setSidebarMode } = useApp()
+  const mode = settings.sidebarMode
+  const cycle = () => {
+    const i = MODE_CYCLE.indexOf(mode)
+    setSidebarMode(MODE_CYCLE[(i + 1) % MODE_CYCLE.length])
+  }
+  return { mode, cycle }
+}
+
+/**
+ * 侧边栏形态切换按钮。
+ *
+ * 图形为「一个矩形，左侧有一条分隔线，线右区域填实」—— 直观表达
+ * 「左侧栏 + 主区域」的结构；三种形态用右侧主区域的大小与左侧栏的显隐来区分：
+ *   - 详细：整块填实
+ *   - 迷你：只填左侧窄条
+ *   - 隐藏：只描边、内部留空
+ *
+ * 该按钮在任何形态下都保持可见（隐藏侧边栏时它仍在原位），否则无法恢复。
+ *
+ * 注：这里原本还有一个「隐藏顶部栏」按钮，现已移除 ——
+ * 顶部栏改成「鼠标离开自动缩成一条细线」后，整条隐藏既无必要，
+ * 又会和自动缩入互相打架。顶部栏自己的锁定开关接管了这件事。
+ */
+function SidebarToggle({ mode, onCycle }: { mode: SidebarMode; onCycle: () => void }) {
+  const next = MODE_CYCLE[(MODE_CYCLE.indexOf(mode) + 1) % MODE_CYCLE.length]
+  return (
+    <button
+      className="sidebar-toggle"
+      onClick={onCycle}
+      title={`侧边栏：${MODE_LABEL[mode]}（点击切换为「${MODE_LABEL[next]}」）`}
+      aria-label={`侧边栏形态：${MODE_LABEL[mode]}，点击切换`}
+    >
+      <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+        {/* 外框 */}
+        <rect
+          x="3" y="4" width="18" height="16" rx="2.5"
+          fill="none" stroke="currentColor" strokeWidth="1.8"
+        />
+        {/* 左侧栏分隔线 */}
+        <line
+          x1="9.5" y1="4" x2="9.5" y2="20"
+          stroke="currentColor" strokeWidth="1.8"
+        />
+        {/* 主区域填充：详细=填满、迷你=仅左栏、隐藏=留空 */}
+        {mode === 'detailed' && (
+          <rect x="10.4" y="5.2" width="9.2" height="13.6" rx="1.2" fill="currentColor" opacity="0.85" />
+        )}
+        {mode === 'mini' && (
+          <rect x="4.4" y="5.2" width="4.2" height="13.6" rx="1.2" fill="currentColor" opacity="0.85" />
+        )}
+      </svg>
+    </button>
+  )
+}
+
 export function Sidebar({ page, onNavigate }: { page: PageKey; onNavigate: (p: PageKey) => void }) {
   const { profile } = useApp()
+  const { mode, cycle } = useSidebarCycle()
+
+  // 隐藏形态：整个侧边栏收起，但切换按钮保留在标题栏上方（见 SidebarRestore）
+  if (mode === 'hidden') return null
+
   return (
-    <aside className="sidebar">
+    <aside className={`sidebar${mode === 'mini' ? ' mini' : ''}`}>
+      {/* 标题栏上方：侧边栏形态切换按钮 */}
+      <div className="sidebar-top">
+        <SidebarToggle mode={mode} onCycle={cycle} />
+      </div>
+
       <div className="sidebar-brand">
         <div className="logo">🧩</div>
-        <div>
-          Workbench
-          <div style={{ fontSize: 10, fontWeight: 400, color: 'var(--sidebar-fg)' }}>插件式工作台 v0.1</div>
-        </div>
+        {mode === 'detailed' && (
+          <div>
+            Workbench
+            <div style={{ fontSize: 10, fontWeight: 400, color: 'var(--sidebar-fg)' }}>插件式工作台 v0.1</div>
+          </div>
+        )}
       </div>
 
       <nav>
@@ -41,9 +121,10 @@ export function Sidebar({ page, onNavigate }: { page: PageKey; onNavigate: (p: P
             key={item.key}
             className={`nav-item${page === item.key ? ' active' : ''}`}
             onClick={() => onNavigate(item.key)}
+            title={mode === 'mini' ? item.label : undefined}
           >
             {ICONS[item.key]}
-            {item.label}
+            {mode === 'detailed' && item.label}
           </div>
         ))}
       </nav>
@@ -52,15 +133,31 @@ export function Sidebar({ page, onNavigate }: { page: PageKey; onNavigate: (p: P
       <div className="sidebar-footer">
         <div className="login-status" onClick={() => onNavigate('profile')} title="点击管理账号">
           <div className={`avatar${profile ? '' : ' guest'}`}>{profile ? profile.avatar : '访'}</div>
-          <div className="meta">
-            <div className="name">{profile ? profile.name : '未登录'}</div>
-            <div className="sub">
-              <span className={`dot ${profile ? 'on' : 'off'}`} />
-              {profile ? '已登录' : '游客模式'}
+          {mode === 'detailed' && (
+            <div className="meta">
+              <div className="name">{profile ? profile.name : '未登录'}</div>
+              <div className="sub">
+                <span className={`dot ${profile ? 'on' : 'off'}`} />
+                {profile ? '已登录' : '游客模式'}
+              </div>
             </div>
-          </div>
+          )}
         </div>
       </div>
     </aside>
+  )
+}
+
+/**
+ * 侧边栏隐藏时，仍需把切换按钮留在界面上（否则无法恢复）。
+ * 由 App 渲染在标题栏上方、左上角。
+ */
+export function SidebarRestore() {
+  const { mode, cycle } = useSidebarCycle()
+  if (mode !== 'hidden') return null
+  return (
+    <div className="sidebar-restore">
+      <SidebarToggle mode={mode} onCycle={cycle} />
+    </div>
   )
 }

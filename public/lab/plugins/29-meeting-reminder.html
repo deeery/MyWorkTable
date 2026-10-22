@@ -1,0 +1,420 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>会议提醒 · 日程与倒计时</title>
+<link rel="stylesheet" href="../assets/theme.css">
+<link rel="stylesheet" href="../assets/compact.css">
+<style>
+  :root { --accent: #3b82f6; --accent-2: #60a5fa; }
+
+  .cd { font-family: var(--mono); font-size: 26px; font-weight: 700; letter-spacing: -.5px; }
+  .meet { display: flex; align-items: center; gap: 10px; padding: 10px 11px; border-radius: var(--radius-sm);
+          background: var(--surface-2); border: 1px solid var(--border); animation: item-in .3s ease both;
+          transition: border-color .2s, background .2s, transform .18s; }
+  .meet:hover { transform: translateX(2px); }
+  .meet.now { border-color: var(--ok); background: color-mix(in srgb, var(--ok) 12%, transparent); }
+  .meet.soon { border-color: var(--warn); background: color-mix(in srgb, var(--warn) 12%, transparent); }
+  .meet.done { opacity: .5; }
+  .meet .tm { font-family: var(--mono); font-size: 12.5px; font-weight: 700; width: 40px; flex: none; }
+  .avs { display: flex; flex: none; }
+  .avs i { width: 21px; height: 21px; border-radius: 50%; display: grid; place-items: center; font-size: 11px;
+           background: var(--surface); border: 1.5px solid var(--surface-2); margin-left: -6px; font-style: normal; }
+  .avs i:first-child { margin-left: 0; }
+
+  /* 时间轴 */
+  .tl { position: relative; padding-left: 16px; }
+  .tl::before { content: ""; position: absolute; left: 5px; top: 4px; bottom: 4px; width: 2px;
+                background: color-mix(in srgb, var(--muted) 26%, transparent); border-radius: 99px; }
+  .tlrow { position: relative; padding: 7px 0; }
+  .tlrow::before { content: ""; position: absolute; left: -15px; top: 12px; width: 9px; height: 9px;
+                   border-radius: 50%; background: var(--muted); border: 2px solid var(--surface); }
+  .tlrow.now::before { background: var(--ok); box-shadow: 0 0 0 4px color-mix(in srgb, var(--ok) 25%, transparent); }
+  .tlrow.soon::before { background: var(--warn); }
+  .tlrow .tt { font-size: 12px; font-weight: 650; }
+  .tlrow .ts { font-size: 10.5px; color: var(--muted); }
+  .tlbar { height: 6px; border-radius: 99px; background: color-mix(in srgb, var(--muted) 20%, transparent); overflow: hidden; margin-top: 5px; }
+  .tlbar > i { display: block; height: 100%; background: linear-gradient(90deg, var(--accent), var(--accent-2)); }
+  .addrow { display: flex; gap: 7px; }
+</style>
+</head>
+<body>
+<div class="win" style="--w:420px">
+  <header class="win-head">
+    <div class="lights"><i></i><i></i><i></i></div>
+    <div class="win-title"><span class="ico">📆</span>会议提醒<span class="win-sub">日程与倒计时</span></div>
+    <div class="spacer"></div>
+    <span class="badge mono" id="clock">--:--:--</span>
+  </header>
+
+  <div class="win-body">
+    <div class="card row between">
+      <div class="col" style="gap:3px">
+        <span class="small muted">下一场会议</span>
+        <b id="nextName" style="font-size:14px">—</b>
+        <span class="cd" id="cd">--:--</span>
+      </div>
+      <div class="ring" id="ring" style="--size:96px;--thick:9px">
+        <div><b id="ringTxt">0</b><span>今日会议</span></div>
+      </div>
+    </div>
+
+    <div class="stats">
+      <div class="card stat"><b id="s1">0</b><span>进行中</span></div>
+      <div class="card stat"><b id="s2">0</b><span>待开始</span></div>
+      <div class="card stat"><b id="s3">0 分</b><span>今日会议时长</span></div>
+    </div>
+
+    <div class="row between card">
+      <div class="col" style="gap:2px">
+        <span class="small bold">提前 5 分钟提醒</span>
+        <span class="tiny muted" id="notifyState">通知权限：未知</span>
+      </div>
+      <label class="switch"><input type="checkbox" id="remind" checked><i></i></label>
+    </div>
+
+    <div class="tabs" id="views">
+      <button class="active" data-view="list">会议列表</button>
+      <button data-view="timeline">时间轴</button>
+    </div>
+
+    <div class="list scroll" id="list" style="--scroll-h:186px"></div>
+    <div class="scroll hidden" id="timeline" style="--scroll-h:186px"></div>
+
+    <div class="sep"></div>
+    <div class="row between">
+      <span class="small bold">添加会议</span>
+      <button class="btn sm" id="demo">🔔 演示提醒</button>
+    </div>
+    <div class="addrow">
+      <input type="text" id="newTitle" placeholder="会议主题" maxlength="20">
+      <input type="time" id="newTime" style="width:110px">
+      <button class="btn primary" id="add">＋</button>
+    </div>
+    <div class="row between">
+      <span class="tiny muted">时长</span>
+      <div class="chips" id="durs">
+        <button class="chip" data-dur="15">15 分</button>
+        <button class="chip on" data-dur="30">30 分</button>
+        <button class="chip" data-dur="60">60 分</button>
+      </div>
+    </div>
+  </div>
+
+  <footer class="win-foot">
+    <span class="dot live"></span><span id="foot">日程守护中 · --</span>
+    <div class="spacer" style="flex:1"></div>
+    <span class="tiny">预览版 · 数据存本地</span>
+  </footer>
+</div>
+
+<script src="../assets/pl.js"></script>
+<script src="../assets/compact.js"></script>
+<script>
+(function () {
+  const { $, $$, toast, notify, beep, store, pad, today } = PL;
+
+  const AVATARS = ['🐱', '🐶', '🦊', '🐼', '🐧', '🐨', '🦉', '🐢'];
+  /**
+   * 样例会议。刻意让最晚一场接近深夜，这样无论什么钟点打开，
+   * 至少有一场处于「未结束」，精简形态的清单不会是空的。
+   * 若只放上午的会议，一到傍晚就全被「只看未结束」滤掉，
+   * 组件会一直显示空态，看着像坏了。
+   */
+  const DEFAULT = [
+    { id: 1, title: '产品晨会', start: '09:30', dur: 30, people: ['🐱', '🦊', '🐼'] },
+    { id: 2, title: '设计评审', start: '11:00', dur: 45, people: ['🐶', '🐧'] },
+    { id: 3, title: '与客户对齐需求', start: '14:00', dur: 60, people: ['🐨', '🦉', '🐢', '🐱'] },
+    { id: 4, title: '周会 & 复盘', start: '17:30', dur: 45, people: ['🐱', '🐶', '🦊'] },
+    { id: 5, title: '线上答疑', start: '23:30', dur: 30, people: ['🦊', '🐧'] }
+  ];
+
+  let meets = store.get('mt-meets', DEFAULT);
+  let remind = store.get('mt-remind', true);
+  let dur = store.get('mt-dur', 30);
+  let view = 'list';
+  let newPeople = ['🐱'];
+  let fired = {};              // 已提醒过的会议 key，避免重复弹
+
+  const toMin = t => Number(String(t).slice(0, 2)) * 60 + Number(String(t).slice(3, 5));
+  const nowMin = () => { const d = new Date(); return d.getHours() * 60 + d.getMinutes() + d.getSeconds() / 60; };
+  const save = () => store.set('mt-meets', meets);
+
+  /** 会议状态：now 进行中 / soon 5 分钟内 / done 已结束 / wait 待开始 */
+  function state(m) {
+    const n = nowMin(), s = toMin(m.start), e = s + m.dur;
+    if (n >= s && n < e) return 'now';
+    if (n >= e) return 'done';
+    if (s - n <= 5) return 'soon';
+    return 'wait';
+  }
+  const nextMeet = () => meets.filter(m => state(m) !== 'done').sort((a, b) => toMin(a.start) - toMin(b.start))[0] || null;
+
+  /* ---------- 渲染 ---------- */
+  function render() {
+    const stats = { now: 0, soon: 0, wait: 0, done: 0 };
+    meets.forEach(m => stats[state(m)]++);
+    $('#s1').textContent = stats.now;
+    $('#s2').textContent = stats.wait + stats.soon;
+    $('#s3').textContent = meets.reduce((s, m) => s + m.dur, 0) + ' 分';
+    $('#ringTxt').textContent = meets.length;
+    $('#ring').style.setProperty('--p', Math.min(100, meets.length * 20));
+    $('#remind').checked = remind;
+    $('#notifyState').textContent = ('Notification' in window)
+      ? '通知权限：' + ({ granted: '已授权', denied: '已拒绝（降级为提示条）', default: '未申请' }[Notification.permission] || '未知')
+      : '当前环境不支持系统通知';
+
+    /* 列表视图 */
+    const box = $('#list');
+    box.innerHTML = '';
+    if (!meets.length) {
+      box.innerHTML = '<div class="empty">今天还没有会议喵~ 在下面添加一个吧</div>';
+    } else {
+      meets.slice().sort((a, b) => toMin(a.start) - toMin(b.start)).forEach(m => {
+        const st = state(m);
+        const tag = { now: '<span class="badge ok">进行中</span>', soon: '<span class="badge warn">即将开始</span>',
+                      done: '<span class="badge">已结束</span>', wait: '<span class="badge">待开始</span>' }[st];
+        const sub = m.dur + ' 分钟 · ' + m.people.length + ' 人参会' +
+          (st === 'now' ? ' · 进行中' : st === 'soon' ? ' · 即将开始' : st === 'done' ? ' · 已结束' : '');
+        const el = document.createElement('div');
+        el.className = 'meet ' + st;
+        el.innerHTML =
+          '<span class="tm">' + m.start + '</span>' +
+          '<div class="grow"><div class="t" style="font-size:12.5px;font-weight:650">' + m.title + '</div>' +
+          '<div class="s tiny muted">' + sub + '</div></div>' +
+          '<div class="avs">' + m.people.map(p => '<i>' + p + '</i>').join('') + '</div>' +
+          (st === 'now' ? '<button class="btn sm primary" data-join="' + m.id + '">加入</button>'
+           : st === 'soon' ? '<button class="btn sm" data-join="' + m.id + '">提前加入</button>'
+           : tag) +
+          '<button class="btn sm ghost" data-ask="' + m.id + '" title="删除会议">🗑</button>';
+        box.appendChild(el);
+      });
+    }
+
+    /* 时间轴视图 */
+    const tl = $('#timeline');
+    tl.innerHTML = '';
+    if (!meets.length) {
+      tl.innerHTML = '<div class="empty">时间轴是空的喵~</div>';
+    } else {
+      const wrap = document.createElement('div');
+      wrap.className = 'tl';
+      meets.slice().sort((a, b) => toMin(a.start) - toMin(b.start)).forEach(m => {
+        const st = state(m);
+        const n = nowMin(), prog = PL.clamp((n - toMin(m.start)) / m.dur * 100, 0, 100);
+        const row = document.createElement('div');
+        row.className = 'tlrow ' + st;
+        row.innerHTML = '<div class="tt">' + m.start + ' · ' + m.title + '</div>' +
+          '<div class="ts">' + m.dur + ' 分钟 · ' + ({ now: '进行中 ' + Math.round(prog) + '%',
+            soon: '马上开始', done: '已结束', wait: '待开始' }[st]) + '</div>' +
+          '<div class="tlbar"><i style="width:' + (st === 'now' ? prog : st === 'done' ? 100 : 0) + '%"></i></div>';
+        wrap.appendChild(row);
+      });
+      tl.appendChild(wrap);
+    }
+
+    /* 事件绑定 */
+    $$('[data-join]', box).forEach(b => b.onclick = () => {
+      const m = meets.find(x => x.id == b.dataset.join);
+      PL.chime();
+      toast('正在加入「' + (m ? m.title : '会议') + '」…（演示）', 'ok');
+    });
+    $$('[data-ask]', box).forEach(b => b.onclick = () => remove(+b.dataset.ask));
+
+    save();
+  }
+
+  function remove(id) {
+    const m = meets.find(x => x.id === id);
+    if (!m) return;
+    meets = meets.filter(x => x.id !== id);
+    save();
+    render();
+    toast('已删除「' + m.title + '」', 'danger');
+  }
+
+  /* ---------- 每秒倒计时 ---------- */
+  let lastSec = -1;
+  setInterval(() => {
+    const d = new Date();
+    $('#clock').textContent = pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
+
+    const n = nextMeet();
+    if (!n) {
+      $('#nextName').textContent = '今日日程已全部结束 ✓';
+      $('#cd').textContent = '--:--';
+      $('#foot').textContent = '今天没有待办会议啦，休息一下喵~';
+    } else {
+      const left = Math.max(0, Math.round((toMin(n.start) - nowMin()) * 60));
+      const st = state(n);
+      $('#nextName').textContent = n.title + ' · ' + n.start;
+      $('#cd').textContent = (st === 'now' ? '进行中 ' : '') +
+        (left >= 3600 ? Math.floor(left / 3600) + ':' + pad(Math.floor(left % 3600 / 60)) : pad(Math.floor(left / 60))) + ':' + pad(left % 60);
+      $('#foot').textContent = st === 'now'
+        ? '「' + n.title + '」正在进行中'
+        : '距离「' + n.title + '」还有 ' + PL.fmtTime(left);
+
+      /* 提前 5 分钟提醒（每场只提醒一次） */
+      const key = n.id + '@' + n.start;
+      if (remind && left <= 300 && left > 0 && !fired[key]) {
+        fired[key] = true;
+        beep(760, .18); setTimeout(() => beep(1020, .22), 180);
+        notify('📆 5 分钟后开会：' + n.title, n.start + ' · ' + n.dur + ' 分钟', { kind: 'warn' });
+        toast('提醒：5 分钟后「' + n.title + '」开始', 'warn', 4200);
+      }
+      if (st === 'now' && !fired['now' + key]) {
+        fired['now' + key] = true;
+        notify('📆 会议已开始：' + n.title, '点击加入会议（演示）');
+      }
+    }
+
+    /* 每 10 秒刷新一次列表高亮（状态随时间变化） */
+    const sec = Math.floor(Date.now() / 1000);
+    if (sec % 10 === 0 && sec !== lastSec) { lastSec = sec; render(); }
+    PL.compactRefreshAll();
+  }, 1000);
+
+  /* ---------- 交互 ---------- */
+  $('#add').onclick = () => {
+    const title = String($('#newTitle').value || '').trim();
+    const time = String($('#newTime').value || '').trim();
+    if (!title) { toast('先写个会议主题吧喵~', 'warn'); return; }
+    if (!/^\d{2}:\d{2}$/.test(time)) { toast('请选择会议开始时间', 'warn'); return; }
+    if (meets.some(m => m.start === time && m.title === title)) { toast('这个会议已经加过啦', 'warn'); return; }
+    const pool = AVATARS.filter(a => !newPeople.includes(a));
+    meets.push({ id: Date.now(), title: title, start: time, dur: dur, people: newPeople.concat(PL.pick(pool) || '🐱').slice(0, 4) });
+    $('#newTitle').value = '';
+    save();
+    render();
+    toast('已添加「' + title + '」' + time + ' 开始', 'ok');
+  };
+  $('#newTitle').addEventListener('keydown', e => { if (e.key === 'Enter') $('#add').click(); });
+
+  $('#remind').onchange = e => {
+    remind = e.target.checked;
+    store.set('mt-remind', remind);
+    if (remind) {
+      PL.askNotify();
+      toast('已开启提前 5 分钟提醒', 'ok');
+      beep(880, .12);
+    } else {
+      toast('已关闭会议提醒', 'warn');
+    }
+    render();
+  };
+
+  $('#demo').onclick = () => {
+    const n = nextMeet();
+    const title = n ? n.title : '产品晨会';
+    const at = n ? n.start : '09:30';
+    PL.chime();
+    notify('📆 5 分钟后开会：' + title, at + ' · 记得准备好材料喵~', { kind: 'warn' });
+    toast('已发送一次会议提醒演示（5 分钟后开会）', 'ok');
+  };
+
+  $$('#views button').forEach(b => b.onclick = () => {
+    view = b.dataset.view;
+    $$('#views button').forEach(x => x.classList.toggle('active', x === b));
+    $('#list').classList.toggle('hidden', view !== 'list');
+    $('#timeline').classList.toggle('hidden', view !== 'timeline');
+    toast(view === 'list' ? '切换到会议列表' : '切换到时间轴视图', 'info');
+  });
+
+  $$('#durs .chip').forEach(b => b.onclick = () => {
+    dur = Number(b.dataset.dur) || 30;
+    store.set('mt-dur', dur);
+    $$('#durs .chip').forEach(x => x.classList.toggle('on', x === b));
+    toast('新会议默认时长 ' + dur + ' 分钟', 'info');
+  });
+
+  /* ---------- 初始化 ---------- */
+  $$('#durs .chip').forEach(x => x.classList.toggle('on', Number(x.dataset.dur) === dur));
+  const now = new Date();
+  $('#newTime').value = pad(Math.min(23, now.getHours() + 1)) + ':00';
+  render();
+
+  /* ============================================================
+     桌面精简形态：下一场会议 / 今日会议清单 / 会议统计
+     ============================================================ */
+  const cwf = PL.cwf;
+
+  PL.compact({
+    id: 'meeting-reminder',
+    name: '会议提醒',
+    icon: '📆',
+    defFormat: 'clock',
+    defSize: 'square',
+    data: () => ({ meets, next: nextMeet() }),
+    formats: [
+      {
+        id: 'clock',
+        name: '下一场',
+        icon: '⏰',
+        options: [
+          { key: 'showTitle', type: 'bool', label: '显示会议名', def: true },
+          { key: 'showLeft', type: 'bool', label: '显示剩余时间', def: true },
+        ],
+        render: (o) => {
+          const m = nextMeet();
+          if (!m) return cwf.clock({ time: '--:--', sec: '', name: '今日无会议' });
+          let left = '';
+          if (o.showLeft !== false) {
+            const d = toMin(m.start) - nowMin();
+            left = d <= 0 ? '进行中' : '还有 ' + Math.round(d) + ' 分钟';
+          }
+          return cwf.clock({
+            time: m.start,
+            sec: left,
+            name: o.showTitle === false ? '' : m.title,
+          });
+        },
+      },
+      {
+        id: 'list',
+        name: '今日清单',
+        icon: '📋',
+        options: [
+          { key: 'max', type: 'num', label: '显示条数', def: 3, min: 2, max: 5 },
+          { key: 'onlyLeft', type: 'bool', label: '只看未结束', def: true },
+        ],
+        render: (o) => {
+          let arr = meets.slice();
+          if (o.onlyLeft !== false) arr = arr.filter(m => state(m) !== 'done');
+          arr.sort((a, b) => toMin(a.start) - toMin(b.start));
+          const rows = arr.map(m => ({
+            icon: state(m) === 'now' ? '🔴' : state(m) === 'soon' ? '🟡' : '📅',
+            text: m.title,
+            right: m.start,
+          }));
+          // empty 文案要区分两种「空」：今天还没到会议的时间 vs 全天都没有会议。
+          // 不给提示的话，组件会是一块纯白，看不出是没安排还是插件坏了。
+          return cwf.list({
+            rows,
+            max: Number(o.max) || 3,
+            empty: o.onlyLeft !== false ? '今天的会议都结束啦' : '今天还没有会议',
+          });
+        },
+      },
+      {
+        id: 'stat',
+        name: '会议数',
+        icon: '🔢',
+        options: [
+          { key: 'scope', type: 'select', label: '统计范围', def: 'left',
+            options: [
+              { value: 'left', label: '未结束' },
+              { value: 'all', label: '全部' },
+            ] },
+        ],
+        render: (o) => {
+          const n = o.scope === 'all' ? meets.length : meets.filter(m => state(m) !== 'done').length;
+          return cwf.stat({ value: n, unit: '场', name: '今日会议' });
+        },
+      },
+    ],
+  });
+})();
+</script>
+</body>
+</html>
